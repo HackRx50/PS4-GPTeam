@@ -1,6 +1,12 @@
 import chainlit as cl
 import requests
 import json
+import os
+
+# Store the last uploaded document ID
+current_document_id = None
+# Maintain a list of uploaded documents with their file names and IDs
+uploaded_documents = {}
 
 def extract_text_JSON(json_object, indent_level=0):
     """Extract text from a JSON object with indentation."""
@@ -29,43 +35,92 @@ def extract_text_JSON(json_object, indent_level=0):
     # Join lines into a single string with a period after each line
     return '\n'.join(lines) + '.'  # Ensure there's a period at the end of the string
 
-def extract_text_JSON_from_file(file_path):
-    """Extract text from a JSON file."""
-    with open(file_path, 'r', encoding='utf-8') as json_file:
-        # Load the entire JSON file
-        json_object = json.load(json_file)  # This will load the whole JSON object into memory
-        return extract_text_JSON(json_object)
-
 @cl.on_message
 async def on_message(message: cl.Message):
-    # URL for your Flask server
+    global current_document_id, uploaded_documents
+
+    # URLs for your Flask server
     url_chat = "http://localhost:3000/chat"
+    url_upload = "http://localhost:3000/upload_document"
 
     # Prepare headers with user and session IDs
     user_id = "123"  # Replace with the actual user ID
     session_id = "J5K7P1ZQ"  # Replace with the actual session ID
 
-    # Prepare the query and document ID
-    query = message.content  # Get user message from the Message object
-    document_id = "doc_fa2b54f9a1e8"  # Replace with the actual document ID if necessary
+    # Check if the message is to switch documents
+    if message.content.startswith("switch to "):
+        file_name = message.content[len("switch to "):].strip()
+        if file_name in uploaded_documents:
+            current_document_id = uploaded_documents[file_name]
+            await cl.Message(content=f"Switched to document {file_name} with ID {current_document_id}").send()
+        else:
+            await cl.Message(content=f"Document {file_name} not found.").send()
+        return  # Exit the function after switching
 
-    # Construct the curl command string using f-string formatting
-    curl_command = (
-        f"curl --location '{url_chat}' "
-        f"--header 'Content-Type: application/json' "
-        f"--header 'x-user-id: {user_id}' "
-        f"--header 'x-session-id: {session_id}' "
-        f"--data '{{\"query\": \"{query}\", \"document_id\": \"{document_id}\"}}'"
-    )
+    # Check if the user wants to list all uploaded documents
+    elif message.content == "list":
+        if uploaded_documents:
+            document_list = "\n".join([f"{name}: {doc_id}" for name, doc_id in uploaded_documents.items()])
+            await cl.Message(content=f"Uploaded documents:\n{document_list}").send()
+        else:
+            await cl.Message(content="No documents uploaded.").send()
+        return  # Exit the function after listing
 
-    # Print the constructed curl command
-    print("CURL Command:", curl_command)
+    # Check if there are any files attached
+    if message.elements:
+        # Processing the first attached document (if any)
+        document = message.elements[0]  # Assuming only one file
+        file_path = document.path
+        file_name = os.path.basename(file_path)
+        query = message.content  # Get user message along with the file
 
+        try:
+            # Upload the document first
+            with open(file_path, 'rb') as file:
+                response = requests.post(url_upload, files={'document': file}, headers={
+                    "x-user-id": user_id,
+                    "x-session-id": session_id
+                })
+            response.raise_for_status()  # Raise an error for bad responses
+
+            # Process the response from the server (assuming it returns a document ID)
+            response_data = response.json()  # Parse response as JSON
+            document_id = response_data.get("document_id", None)
+
+            if document_id:
+                # Store the document ID and update the current document ID
+                uploaded_documents[file_name] = document_id
+                current_document_id = document_id
+
+            # Send a success message to Chainlit about the document upload
+            extracted_info = extract_text_JSON(response_data)
+            await cl.Message(content=f"Document {file_name} uploaded successfully! {extracted_info}").send()
+
+            # Send the chat message with the document ID
+            await send_chat_message(url_chat, query, document_id, user_id, session_id)
+
+        except requests.exceptions.RequestException as e:
+            await cl.Message(content=f"An error occurred while uploading the document: {str(e)}").send()
+            return  # Stop further processing if upload fails
+        except Exception as e:
+            await cl.Message(content=f"An unexpected error occurred: {str(e)}").send()
+            return  # Stop further processing if there's any other error
+
+    else:
+        # If no files are attached, proceed with normal chat processing
+        query = message.content  # Get user message
+        if current_document_id:
+            query += f"\n(Document ID: {current_document_id})"
+        
+        await send_chat_message(url_chat, query, current_document_id, user_id, session_id)
+
+async def send_chat_message(url_chat, query, document_id, user_id, session_id):
+    """Send the chat message to the server."""
     try:
         # Send a POST request to the Flask server for chat using requests
         response = requests.post(url_chat, json={
             "query": query,
-            "document_id": document_id
+            "document_id": document_id  # Include the document ID (if any)
         }, headers={
             "Content-Type": "application/json",
             "x-user-id": user_id,
@@ -78,7 +133,7 @@ async def on_message(message: cl.Message):
         
         # Extract text from the JSON response
         extracted_text = extract_text_JSON(response_data)
-        print("Extracted text:", extracted_text)
+
         # Send the extracted text as a response to Chainlit
         await cl.Message(content=extracted_text).send()
 
