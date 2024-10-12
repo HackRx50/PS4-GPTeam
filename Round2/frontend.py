@@ -5,7 +5,7 @@ import os
 
 # Store the last uploaded document ID
 current_document_id = None
-# Maintain a list of uploaded documents with their file names and IDs
+# Maintain a list of uploaded documents with their original file names and IDs
 uploaded_documents = {}
 
 def extract_text_JSON(json_object, indent_level=0):
@@ -56,22 +56,21 @@ async def on_message(message: cl.Message):
         else:
             await cl.Message(content=f"Document {file_name} not found.").send()
         return  # Exit the function after switching
-
-    # Check if the user wants to list all uploaded documents
     elif message.content == "list":
         if uploaded_documents:
+            await cl.Message(content=f"Uploaded documents: {', '.join(uploaded_documents.keys())}").send()
             document_list = "\n".join([f"{name}: {doc_id}" for name, doc_id in uploaded_documents.items()])
             await cl.Message(content=f"Uploaded documents:\n{document_list}").send()
         else:
             await cl.Message(content="No documents uploaded.").send()
         return  # Exit the function after listing
-
     # Check if there are any files attached
     if message.elements:
         # Processing the first attached document (if any)
         document = message.elements[0]  # Assuming only one file
         file_path = document.path
-        file_name = os.path.basename(file_path)
+        original_file_name = os.path.basename(file_path)  # Get the original file name
+        print(original_file_name)
         query = message.content  # Get user message along with the file
 
         try:
@@ -83,18 +82,18 @@ async def on_message(message: cl.Message):
                 })
             response.raise_for_status()  # Raise an error for bad responses
 
-            # Process the response from the server (assuming it returns a document ID)
+            # Assuming the server will return the document ID in the response
             response_data = response.json()  # Parse response as JSON
             document_id = response_data.get("document_id", None)
 
             if document_id:
-                # Store the document ID and update the current document ID
-                uploaded_documents[file_name] = document_id
-                current_document_id = document_id
+                # Store the original filename and its document ID
+                uploaded_documents[original_file_name] = document_id
+                current_document_id = document_id  # Update current document ID
 
             # Send a success message to Chainlit about the document upload
             extracted_info = extract_text_JSON(response_data)
-            await cl.Message(content=f"Document {file_name} uploaded successfully! {extracted_info}").send()
+            await cl.Message(content=f"Document {original_file_name} uploaded successfully! {extracted_info}").send()
 
             # Send the chat message with the document ID
             await send_chat_message(url_chat, query, document_id, user_id, session_id)
