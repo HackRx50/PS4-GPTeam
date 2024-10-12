@@ -23,6 +23,7 @@ import numpy as np
 from pdf2image import convert_from_path
 import re
 from docx import Document
+import random
 
 base_url = "https://hackrx-ps4.vercel.app"
 # Initialize conversation state
@@ -266,7 +267,11 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
 
     # Check for missing information based on the action type
     missing_info = []
-    if action_name == "create_entity" and entity_id is None:
+    if action_name == "create_entity" :
+        if entity_id is None:
+            missing_info.append("id")
+        if name is None:
+            missing_info.append("name")
         missing_info.append("id")
     if action_name == "cancel_entity" and entity_id is None:
         missing_info.append("id")
@@ -334,7 +339,8 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
     # Proceed with the action if all required information is present
     confirmation_message = ""
     if action_name == "create_order":
-        confirmation_message = create_order(entity_id, mobile, name, product_price=100,product_name="Product 1", action="create_order")
+        random2 = random.randint(1000, 9999)
+        confirmation_message = create_order(order_id=random2,product_id=entity_id, mobile=mobile, product_name=name, product_price=100, action="create_order")
         #confirmation_message = f"Entity with id {entity_id}, name {name}, and price {price} has been created."
     elif action_name == "cancel_order":
         confirmation_message = f"Entity with id {entity_id} has been cancelled."
@@ -554,7 +560,8 @@ def classify_query_with_gemini(query: str) -> str:
     "generate_lead",
     "get_orders",
     "get_order_status",
-    "context_based"
+    "context_based",
+    "context-based"
 ]
     prompt = f"""
     You are a helpful assistant. Classify the following query into one of these categories:
@@ -604,6 +611,9 @@ Classification:
     print(classification)
     for i in order_functions:  
         if i in classification:
+            print("Gemini Classification:", i)
+            if i == "context-based":
+                return "context_based"
             return i
 def prompt_gemini(query: str) -> str:
     order_functions = [
