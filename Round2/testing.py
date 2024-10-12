@@ -22,12 +22,12 @@ import cv2
 import numpy as np
 from pdf2image import convert_from_path
 import re
+from docx import Document
+import random
 
+base_url = "https://hackrx-ps4.vercel.app"
 # Initialize conversation state
 conversation_state = defaultdict(dict)
-
-# Global dictionary to store session-specific variables, with lists for multiple entries
-session_data = {}
 
 # Suppress specific warnings from Hugging Face transformers library
 warnings.filterwarnings("ignore", message="You are using the default legacy behaviour")
@@ -48,6 +48,10 @@ DEFAULT_ACTIONS_LIST = ["create_order", "cancel_order", "collect_payment", "view
 app = Flask(__name__)
 CORS(app)
 collection = None
+
+order_id = 12345  # Static order ID
+mobile = "555-1234"  # Static mobile number
+action = "create_order"  # Static action
 
 # Now you can retrieve the API key from the environment variable when needed
 google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -75,16 +79,9 @@ embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 # Initialize Gemini model
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# Base URL for the API
-base_url = "https://hackrx-ps4.vercel.app"
-
-# Define the default actions list outside the function
-DEFAULT_ACTIONS_LIST = ["create_order", "cancel_order", "collect_payment", "view_invoice"]
-
-
-#---------------------------------------------------------------------------------------------------------------------
-
 # Helper functions to extract text from different document types
+
+
 def extract_text_from_pdf(pdf_path):
     """Extract text from a PDF file with layout preservation and OCR fallback for scanned PDFs."""
     text = ""
@@ -98,6 +95,7 @@ def extract_text_from_pdf(pdf_path):
                 for image in images:
                     ocr_text = pytesseract.image_to_string(image)
                     text += ocr_text + "\n"
+    print("EXTRACTED TEXT: \n", clean_text(text))
     return clean_text(text)
 
 def extract_text_from_ppt(ppt_path):
@@ -118,9 +116,15 @@ def extract_text_from_ppt(ppt_path):
                 for sub_shape in shape.shapes:
                     if hasattr(sub_shape, "text"):
                         text += sub_shape.text + "\n"
+    print("EXTRACTED TEXT: \n", clean_text(text))
     return clean_text(text)
 
-
+def extract_text_from_docx(file_path):
+    """Extract text from a .docx file."""
+    doc = Document(file_path)
+    text = '\n'.join([para.text for para in doc.paragraphs])
+    print("EXTRACTED TEXT: \n", clean_text(text))
+    return clean_text(text)
 
 def preprocess_image(image):
     """Preprocess the image for better OCR accuracy: grayscale, contrast, and resize."""
@@ -136,19 +140,71 @@ def extract_text_from_image(image_path):
     image = Image.open(image_path)
     preprocessed_image = preprocess_image(image)  # Apply preprocessing for better accuracy
     text = pytesseract.image_to_string(preprocessed_image, config='--psm 6')  # Use custom OCR config for block text
+    print("EXTRACTED TEXT: \n", clean_text(text))
     return clean_text(text)
+
+def extract_text_from_txt(file_path):
+    """Extract text from a text file."""
+    with open(file_path, 'r', encoding='utf-8') as file:
+        return file.read()
 
 def extract_text_from_file(file_path):
     """Extract text based on the file type."""
     _, extension = os.path.splitext(file_path)
+    
     if extension.lower() == ".pdf":
         return extract_text_from_pdf(file_path)
     elif extension.lower() in [".ppt", ".pptx"]:
         return extract_text_from_ppt(file_path)
     elif extension.lower() in [".jpg", ".jpeg", ".png", ".bmp", ".tiff"]:
         return extract_text_from_image(file_path)
+    elif extension.lower() == ".txt":
+        return extract_text_from_txt(file_path)
+    elif extension.lower() == ".docx":
+        return extract_text_from_docx(file_path)
+    elif extension.lower() == ".json":
+        # Open the file and load the JSON data with UTF-8 encoding
+        extracted_text = extract_text_JSON_from_file(file_path)
+        return clean_text(extracted_text)
     else:
         return None
+
+
+def extract_text_JSON(json_object, indent_level=0):
+    """Extract text from a JSON object with indentation."""
+    lines = []
+    indent = '    ' * indent_level  # Create indentation for better readability
+
+    if isinstance(json_object, dict):
+        for key, value in json_object.items():
+            if isinstance(value, (dict, list)):
+                # For nested dictionaries or lists, call the function recursively
+                nested_value = extract_text_JSON(value, indent_level + 1)
+                lines.append(f'{indent}{key}: {nested_value.strip()}')  # Append key with nested values
+            else:
+                # Directly append values, with indentation
+                lines.append(f'{indent}{key}: {value}')  # Append the key-value pair directly
+    elif isinstance(json_object, list):
+        for index, item in enumerate(json_object):
+            if isinstance(item, (dict, list)):
+                # For nested dictionaries or lists, call the function recursively
+                nested_value = extract_text_JSON(item, indent_level + 1)
+                lines.append(f'{indent}Item {index + 1}: {nested_value.strip()}')  # Append with item index
+            else:
+                # Directly append values
+                lines.append(f'{indent}Item {index + 1}: {item}')  # Append the item directly
+
+    # Join lines into a single string with a period after each line
+    return '\n'.join(lines) + '.'  # Ensure there's a period at the end of the string
+
+def extract_text_JSON_from_file(file_path):
+    """Extract text from a JSON file."""
+    with open(file_path, 'r', encoding='utf-8') as json_file:
+        # Load the entire JSON file
+        json_object = json.load(json_file)  # This will load the whole JSON object into memory
+        return extract_text_JSON(json_object)  # Call the extraction function
+
+
 def clean_text(text):
     """Remove unnecessary empty lines and extra spaces from extracted text."""
     # Remove leading/trailing spaces and collapse multiple spaces into one
@@ -158,303 +214,202 @@ def clean_text(text):
     return cleaned_text
 
 
-#---------------------------------------------------------------------------------------------------------------------
-
-def fetch_and_call_api(query):
-    response_data = {}
-    try:
-        response = requests.get("https://dummyapi.com/api", params={"query": query})
-        response_data = response.json()
-    except Exception as e:
-        return "Need API Key to call, to perform the action."
-
-    if response and response_data.get("status") == "success":
-        return response_data["message"]
+def search_json_for_keys(data, keys):
+    """
+    Recursively search for the given keys in a nested JSON structure.
+    :param data: The JSON data (could be dict or list)
+    :param keys: The list of keys to search for
+    :return: A dictionary with found key-value pairs
+    """
+    found = {}
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key in keys:
+                found[key] = value  # Found the key, add to result
+            elif isinstance(value, (dict, list)):
+                # Recursively search in nested structures
+                found.update(search_json_for_keys(value, keys))
+    elif isinstance(data, list):
+        for item in data:
+            found.update(search_json_for_keys(item, keys))
     
-#---------------------------------------------------------------------------------------------------------------------
-
-# 1. Generate Lead
-def generate_lead(mobile):
-    url = f"{base_url}/generate-lead"
-    data = {"mobile": mobile}
-    response = requests.post(url, json=data)
-    return response.json()
-
-# 2. Eligibility Check
-def eligibility_check(mobile):
-    url = f"{base_url}/eligibility-check"
-    data = {"mobile": mobile}
-    response = requests.post(url, json=data)
-    return response.json()
-
-# 3. Health Check
-def health_check():
-    url = f"{base_url}/health-check"
-    response = requests.get(url)
-    return response.json()
-
-# 4. Create Order
-def create_order(order_id, mobile, product_id, product_name, product_price, action="cancel"):
-    url = f"{base_url}/order"
-    data = {
-        "id": order_id,
-        "mobile": mobile,
-        "productId": product_id,
-        "productName": product_name,
-        "productPrice": product_price,
-        "action": action  # Include action parameter
-    }
-    response = requests.post(url, json=data)
-    return response.json()
-
-# 5. Get All Orders
-def get_orders():
-    url = f"{base_url}/orders"
-    response = requests.get(url)
-    return response.json()
-
-# 6. Get Order Status
-def get_order_status(order_id, mobile):
-    url = f"{base_url}/order-status"
-    params = {"orderId": order_id, "mobile": mobile}
-    response = requests.get(url, params=params)
-    return response.json()
+    return found
 
 
-
-#---------------------------------------------------------------------------------------------------------------------
-
-"""def execute_action(action_name: str, query: str, session_id: str) -> str:
-    
-    key_points_json = extract_key_action_with_gemini(query)
-    extracted_data = json.loads(key_points_json)
-    print("Extracted data:", extracted_data)
-
-    # Filter out null values
-    order_id = extracted_data.get("order_id")
-    payment_id = extracted_data.get("payment_id")
-    invoice_id = extracted_data.get("invoice_id")
-    print("Order ID:", order_id, "Payment ID:", payment_id, "Invoice ID:", invoice_id)
-    # Check for missing identifiers and prompt the user
-    missing_info = []
-    
-    if action_name == "create_order" and order_id is None:
-        missing_info.append("Order ID")
-    if action_name == "cancel_order" and order_id is None:
-        missing_info.append("Order ID")
-    if action_name == "collect_payment" and payment_id is None:
-        missing_info.append("Payment ID")
-    if action_name == "view_invoice" and invoice_id is None:
-        missing_info.append("Invoice ID")
-    print(missing_info)
-    if missing_info:
-        return f"Please provide the following information: {', '.join(missing_info)}."
-
-    # Proceed with the action if all required identifiers are present
-    confirmation_message = ""
-    if action_name == "create_order":
-        confirmation_message = f"Are you sure you want to create an order with ID {order_id}?"
-        conversation_state[session_id]["pending_action"] = "create_order"
-        conversation_state[session_id]["order_id"] = order_id
-    elif action_name == "cancel_order":
-        confirmation_message = f"Are you sure you want to cancel your order with ID {order_id}?"
-        conversation_state[session_id]["pending_action"] = "cancel_order"
-        conversation_state[session_id]["order_id"] = order_id
-    elif action_name == "collect_payment":
-        confirmation_message = f"Are you sure you want to collect the payment with ID {payment_id}?"
-        conversation_state[session_id]["pending_action"] = "collect_payment"
-        conversation_state[session_id]["payment_id"] = payment_id
-    elif action_name == "view_invoice":
-        return f"Here is your invoice with ID {invoice_id}."
-    else:
-        return "No action taken."
-
-    return confirmation_message"""
-
-
-#---------------------------------------------------------------------------------------------------------------------
-
-
-
-def execute_action(action_name: str, query: str, session_id: str) -> str:
+def execute_action(action_name: str, query: str, session_id: str, document_id: str = None) -> str:
     """
     Executes the specified action based on the provided action name and query.
-    Handles multiple values for certain parameters.
+    Dynamically retrieves missing information from a collection if needed.
     """
-    #global session_data
-    
-    # Ensure session data exists for the session_id and initialize lists for multiple values
-    if session_id not in session_data:
-        session_data[session_id] = {
-            "order_id": None,
-            "payment_id": None,
-            "invoice_id": None,
-            "mobile": [],  # Allow multiple mobile numbers
-            "product_id": [],  # Allow multiple product IDs
-            "product_name": [],  # Allow multiple product names
-            "product_price": []  # Allow multiple product prices
-        }
-
-    # Extract key information
+    print("query", query)
+    # Extract key points using Gemini
     key_points_json = extract_key_action_with_gemini(query)
     extracted_data = json.loads(key_points_json)
     print("Extracted data:", extracted_data)
 
-    # Append extracted values to session-specific variables if they allow multiple entries
-    if extracted_data.get("order_id"):
-        session_data[session_id]["order_id"] = extracted_data.get("order_id")
-    if extracted_data.get("payment_id"):
-        session_data[session_id]["payment_id"] = extracted_data.get("payment_id")
-    if extracted_data.get("invoice_id"):
-        session_data[session_id]["invoice_id"] = extracted_data.get("invoice_id")
-    
-    # For multiple entries, append the new data to the respective lists
-    if extracted_data.get("mobile"):
-        session_data[session_id]["mobile"].append(extracted_data.get("mobile"))
-    if extracted_data.get("product_id"):
-        session_data[session_id]["product_id"].append(extracted_data.get("product_id"))
-    if extracted_data.get("product_name"):
-        session_data[session_id]["product_name"].append(extracted_data.get("product_name"))
-    if extracted_data.get("product_price"):
-        session_data[session_id]["product_price"].append(extracted_data.get("product_price"))
-    
-    print("Session Data:", session_data[session_id])
-
-    # Check for missing identifiers
-    missing_info = []
-    
-    # Check for identifiers based on action
-    if action_name == "create_order":
-        if session_data[session_id]["order_id"] is None:
-            missing_info.append("Order ID")
-        if not session_data[session_id]["mobile"]:
-            missing_info.append("Mobile Number")
-        if not session_data[session_id]["product_id"]:
-            missing_info.append("Product ID")
-        if not session_data[session_id]["product_name"]:
-            missing_info.append("Product Name")
-        if not session_data[session_id]["product_price"]:
-            missing_info.append("Product Price")
-
-    elif action_name == "cancel_order":
-        if session_data[session_id]["order_id"] is None:
-            missing_info.append("Order ID")
-    
-    elif action_name == "collect_payment":
-        if session_data[session_id]["payment_id"] is None:
-            missing_info.append("Payment ID")
-
-    elif action_name == "generate_lead":
-        if not session_data[session_id]["mobile"]:
-            missing_info.append("Mobile Number")
-
-    elif action_name == "check_eligibility":
-        if not session_data[session_id]["mobile"]:
-            missing_info.append("Mobile Number")
-
+    if action_name == "eligibility_check":
+        response = eligibility_check(mobile)
+        return f"The eligibility check for mobile {mobile} has been completed. Results: {response}"
     elif action_name == "health_check":
-        # No specific data is required for health check, but can be noted if needed
-        pass
+        response = health_check()
+        return f"The health check has been conducted. All systems are operational. Response: {response}"
+    elif action_name == "generate_lead":
+        response = generate_lead(mobile)
+        return f"A lead has been successfully generated for mobile {mobile}. Response: {response}"
+    
+    # Extracted generic data from the query
+    entity_id = extracted_data.get("id")  # Generic id
+    name = extracted_data.get("name")  # Generic name
+    amount = extracted_data.get("amount")  # Generic amount
+    price = extracted_data.get("price")  # Generic price
 
-    elif action_name == "get_orders":
-        # No specific data is required for getting orders
-        pass
+    print(f"id: {entity_id}, Name: {name}, Amount: {amount}, Price: {price}")
 
-    elif action_name == "get_order_status":
-        if session_data[session_id]["order_id"] is None:
-            missing_info.append("Order ID")
-        if not session_data[session_id]["mobile"]:
-            missing_info.append("Mobile Number")
+    # Check for missing information based on the action type
+    missing_info = []
+    if action_name == "create_entity" :
+        if entity_id is None:
+            missing_info.append("id")
+        if name is None:
+            missing_info.append("name")
+        missing_info.append("id")
+    if action_name == "cancel_entity" and entity_id is None:
+        missing_info.append("id")
+    if action_name == "process_payment" and amount is None:
+        missing_info.append("amount")
+    if action_name == "view_entity" and entity_id is None:
+        missing_info.append("id")
 
-    print(missing_info)
+    print("Missing info:", missing_info)
+
+    # If there is any missing info, formulate a dynamic query to retrieve it
     if missing_info:
-        return f"Please provide the following information: {', '.join(missing_info)}."
+        for missing_field in missing_info:
+            missing_query = f"What is the {missing_field.lower()}?"
 
-    # Proceed with the action if all required identifiers are present
+            # Query the collection to retrieve the missing info
+            context_results = collection.query(
+                query_texts=[missing_query],   # Dynamic query
+                n_results=5,
+                include=["documents", "metadatas"],
+                where={"document_id": document_id}  # Filter based on document id
+            )
+            print("Context results:", context_results)
+
+            # Process query results and extract the missing information
+            for result in context_results.get('documents', []):
+                if isinstance(result, list) and len(result) > 0:
+                    document_text = result[0]  # Access the string from the list
+                    print("Document Text:", document_text)
+
+                    # Use Gemini to extract relevant information from the document
+                    gemini_response = extract_key_action_with_gemini(document_text)
+                    extracted_data = json.loads(gemini_response)
+                    print("Extracted Data from Gemini:", extracted_data)
+
+                    # Search for the required missing information using the recursive function
+                    found_data = search_json_for_keys(extracted_data, missing_info)
+                    print("Found Data:", found_data)
+
+                    # Update the missing information if found
+                    if 'id' in missing_info and 'id' in found_data:
+                        entity_id = found_data['id']
+                        missing_info.remove('id')
+
+                    if 'amount' in missing_info and 'amount' in found_data:
+                        amount = found_data['amount']
+                        missing_info.remove('amount')
+
+                    if 'name' in missing_info and 'name' in found_data:
+                        name = found_data['name']
+                        missing_info.remove('name')
+                else:
+                    print(f"Unexpected data format in query result: {result}")
+
+        # If missing info is still not retrieved, prompt the user for manual input
+        if missing_info:
+            conversation_state[session_id]["pending_action"] = action_name
+            conversation_state[session_id]["missing_info"] = missing_info
+            conversation_state[session_id]["query"] = query
+            conversation_state[session_id]["document_id"] = document_id
+            conversation_state[session_id]["order_id"] = entity_id if action_name in ["create_order", "cancel_order"] else None
+            conversation_state[session_id]["amount"] = amount if action_name == "process_payment" else None
+            return f"Please provide the following information: {', '.join(missing_info)}."
+
+    # Proceed with the action if all required information is present
     confirmation_message = ""
     if action_name == "create_order":
-        confirmation_message = f"Are you sure you want to create an order with ID {session_data[session_id]['order_id']} and products: {session_data[session_id]['product_name']}?"
-        conversation_state[session_id]["pending_action"] = "create_order"
-        conversation_state[session_id]["order_id"] = session_data[session_id]["order_id"]
-        conversation_state[session_id]["mobile"] = session_data[session_id]["mobile"]
-        conversation_state[session_id]["product_id"] = session_data[session_id]["product_id"]
-        conversation_state[session_id]["product_name"] = session_data[session_id]["product_name"]
-        conversation_state[session_id]["product_price"] = session_data[session_id]["product_price"]
+        random2 = random.randint(1000, 9999)
+        confirmation_message = create_order(order_id=random2,product_id=entity_id, mobile=mobile, product_name=name, product_price=100, action="create_order")
+        #confirmation_message = f"Entity with id {entity_id}, name {name}, and price {price} has been created."
     elif action_name == "cancel_order":
-        confirmation_message = f"Are you sure you want to cancel your order with ID {session_data[session_id]['order_id']}?"
-        conversation_state[session_id]["pending_action"] = "cancel_order"
-        conversation_state[session_id]["order_id"] = session_data[session_id]["order_id"]
-    elif action_name == "collect_payment":
-        confirmation_message = f"Are you sure you want to collect the payment with ID {session_data[session_id]['payment_id']}?"
-        conversation_state[session_id]["pending_action"] = "collect_payment"
-        conversation_state[session_id]["payment_id"] = session_data[session_id]["payment_id"]
-    elif action_name == "generate_lead":
-        confirmation_message = f"Generating lead for mobile number: {', '.join(session_data[session_id]['mobile'])}."
-        conversation_state[session_id]["pending_action"] = "generate_lead"
-    elif action_name == "check_eligibility":
-        confirmation_message = f"Checking eligibility for mobile number: {', '.join(session_data[session_id]['mobile'])}."
-        conversation_state[session_id]["pending_action"] = "check_eligibility"
+        confirmation_message = f"Entity with id {entity_id} has been cancelled."
+    elif action_name == "process_payment":
+        confirmation_message = f"Payment of amount {amount} has been processed."
+    elif action_name == "view_entity":
+        confirmation_message = f"Here is the entity with id {entity_id}."
+    elif action_name == "eligibility_check":
+        response = eligibility_check(mobile)
+        return f"The eligibility check for mobile {mobile} has been completed. Results: {response}"
     elif action_name == "health_check":
-        confirmation_message = "Performing health check."
-        conversation_state[session_id]["pending_action"] = "health_check"
-    elif action_name == "get_orders":
-        confirmation_message = "Retrieving all orders."
-        conversation_state[session_id]["pending_action"] = "get_orders"
+        response = health_check()
+        return f"The health check has been conducted. All systems are operational. Response: {response}"
+    elif action_name == "generate_lead":
+        response = generate_lead(mobile)
+        return f"A lead has been successfully generated for mobile {mobile}. Response: {response}"
     elif action_name == "get_order_status":
-        confirmation_message = f"Getting status for order ID {session_data[session_id]['order_id']}."
-        conversation_state[session_id]["pending_action"] = "get_order_status"
+        response = get_order_status(entity_id, mobile)
+        return f"The order status for order {entity_id} has been retrieved. Response: {response}"
     else:
-        return "No action taken."
-
+        confirmation_message = "No action taken."
     return confirmation_message
-#----------------------------------------------------------------------------------------------
-
-def confirm_action(action_name: str, order_id: str = None, mobile: str = None, product_id: str = None, product_name: str = None, product_price: float = None) -> str:
+def confirm_action(action_name: str, identifier: str, mobile: str = None, product_id: str = None, product_name: str = None, product_price: float = None) -> str:
     """
     Confirms the specified action and executes it if confirmed.
+    Provides detailed confirmation messages based on the action type.
     """
-    if action_name == "cancel_order":
-        if order_id is None or mobile is None:
-            return "Order ID and mobile are required to cancel an order."
-        # Call the appropriate function (assuming create_order can handle cancellation)
-        return create_order(order_id, mobile, product_id, product_name, product_price, action="cancel")
 
+    if action_name == "cancel_order":
+        # You can implement the cancel_order function as needed.
+        return f"Your order with ID {identifier} has been successfully cancelled."
+    
     elif action_name == "create_order":
-        if None in [order_id, mobile, product_id, product_name, product_price]:
-            return "All parameters are required to create an order."
-        return create_order(order_id, mobile, product_id, product_name, product_price)
+        response = create_order(identifier, mobile, product_id, product_name, product_price)
+        return f"Your order with ID {identifier} has been created successfully. Response: {response}"
 
     elif action_name == "collect_payment":
-        if order_id is None:
-            return "Order ID is required to collect payment."
-        # Here we could define a function to collect payment if available
-        return f"Payment for order ID {order_id} has been collected successfully."
+        # Implement the collect_payment function as needed and call it here.
+        return f"Payment with ID {identifier} has been collected successfully."
 
-    elif action_name == "generate_lead":
-        if mobile is None:
-            return "Mobile number is required to generate a lead."
-        return generate_lead(mobile)
+    elif action_name == "view_invoice":
+        # Implement the view_invoice function as needed and call it here.
+        return f"Here is your invoice with ID {identifier}. Please review it carefully."
 
-    elif action_name == "check_eligibility":
-        if mobile is None:
-            return "Mobile number is required to check eligibility."
-        return eligibility_check(mobile)
+    elif action_name == "eligibility_check":
+        response = eligibility_check(mobile)
+        return f"The eligibility check for mobile {mobile} has been completed. Results: {response}"
 
     elif action_name == "health_check":
-        return health_check()
+        response = health_check()
+        return f"The health check has been conducted. All systems are operational. Response: {response}"
+
+    elif action_name == "generate_lead":
+        response = generate_lead(mobile)
+        return f"A lead has been successfully generated for mobile {mobile}. Response: {response}"
 
     elif action_name == "get_orders":
-        return get_orders()
+        response = get_order_status(identifier, mobile)
+        return f"Here are the orders associated with ID {identifier}. Response: {response}"
 
     elif action_name == "get_order_status":
-        if order_id is None or mobile is None:
-            return "Order ID and mobile are required to get order status."
-        return get_order_status(order_id, mobile)
+        response = get_order_status(identifier, mobile)
+        return f"The status for the order with ID {identifier} has been retrieved. Response: {response}"
 
-    # Additional actions can be confirmed here as needed
+    # If the action name does not match any known category
     return "No action taken."
 
-#---------------------------------------------------------------------------------------------------------------------
+# Define the default actions list outside the function
+DEFAULT_ACTIONS_LIST = ["create_order", "cancel_order", "collect_payment", "view_invoice"]
 
 def classify_query_with_flan(query: str, actions_list: list = DEFAULT_ACTIONS_LIST) -> str:
     """Use Flan-T5 to classify the query as action-based or context-based using a dynamic list of actions."""
@@ -482,58 +437,95 @@ def classify_query_with_flan(query: str, actions_list: list = DEFAULT_ACTIONS_LI
     return "context_based"
 
 
-
-#---------------------------------------------------------------------------------------------------------------------
-
 def build_combined_prompt(query: str, context: List[str], history: List[Dict[str, str]]) -> str:
-    base_prompt = """
-        I am going to ask you a question, which I would like you to answer strictly based on the given context.
-        If there is not enough information in the context or clear to answer the question, make a guess based on the context. YOUR RESPONSE SHOULD BE STRICTLY BASED ON CONTEXT.
+    base_prompt = """I am going to ask you a question, and your answer should be based strictly on the context provided from the document, along with the history of our previous interactions. 
+Please extract all relevant information from the document to generate a comprehensive and accurate response, while also taking into account the knowledge from the responses you have already provided during this conversation.
+If the context is insufficient or unclear, make a reasonable inference based on both the document content and the history of our conversation. Ensure that your response is directly aligned with the user query and that you use both the document as the source of truth and the stored conversation history.
+Your response must be informative, provide as much relevant detail as possible, and never leave the question unanswered unless absolutely necessary. If any additional key information is missing, prompt the user for further clarification.
         """
     user_prompt = f"The question is '{query}'. Here is all the context you have: {' '.join(context)}"
-    history_prompt = "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
-    #print("Combined Prompt:", f"{base_prompt} {history_prompt} {user_prompt}")
+    #history_prompt = "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
+    history_prompt= "Here is all the history you have:\n" + "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
+    history_prompt = clean_text(history_prompt)
+    print()
+    print("HISTORY : ", f"{history_prompt}")
 
     return f"{base_prompt} {history_prompt} {user_prompt}"
 
+# Common headers
+headers = {
+    "x-team": "GPTeam"
+}
 
-#---------------------------------------------------------------------------------------------------------------------
+# 1. Generate Lead
+def generate_lead(mobile):
+    url = f"{base_url}/generate-lead"
+    data = {"mobile": mobile}
+    response = requests.post(url, json=data, headers=headers)
+    return response.json()
 
-def classify_action_with_gemini(query: str) -> str:
-    """
-    Use Gemini to classify the query into an action or a context-based query.
-    """
-    prompt = f"""
-    You are a helpful assistant. Classify the following query as one of the actions: create_order, cancel_order, collect_payment, view_invoice, 
-    or context_based. 
-    
-    Query: "{query}"
-    """
-    
-    # Send the prompt to Gemini for classification
-    response = model.generate_content(prompt)
-    classification = response.text.strip().lower()
-    
-    # Check if the classification matches one of the known actions
-    for action in DEFAULT_ACTIONS_LIST:
-        if action in classification:
-            return action
-    
-    return "context_based"
+# 2. Eligibility Check
+def eligibility_check(mobile):
+    url = f"{base_url}/eligibility-check"
+    data = {"mobile": mobile}
+    response = requests.post(url, json=data, headers=headers)
+    return response.json()
+
+# 3. Health Check
+def health_check():
+    url = f"{base_url}/health-check"
+    response = requests.get(url, headers=headers)
+    return response.json()
+
+# Static values for order_id, mobile, and action
 
 
-#---------------------------------------------------------------------------------------------------------------------
+# 4. Create Order
+def create_order(order_id, mobile, product_id, product_name, product_price, action="create_order"):
+    url = f"{base_url}/order"
+    data = {
+        "id": order_id,
+        "mobile": mobile,
+        "productId": product_id,
+        "productName": product_name,
+        "productPrice": product_price,
+        "action": action  # Include action parameter
+    }
+    response = requests.post(url, json=data, headers=headers)
+    print(response.json())
+    return response.json()
+
+# 5. Get All Orders
+def get_orders():
+    url = f"{base_url}/orders"
+    response = requests.get(url, headers=headers)
+    return response.json()
+
+# 6. Get Order Status
+def get_order_status(order_id, mobile):
+    url = f"{base_url}/order-status"
+    params = {"orderId": order_id, "mobile": mobile}
+    response = requests.get(url, params=params, headers=headers)
+    return response.json()
 
 def extract_key_action_with_gemini(query: str) -> str:
     """
     Use Gemini to extract key information from the query.
     """
     prompt = f"""
-    "You are a helpful assistant. Extract key information from the below statement, such as action_name, order_id, mobile number, product_id, product_name, and product_price, and return the extracted information in JSON format."
-    
-    statement: "{query}"
+    You are a helpful assistant. Extract key information from the statement below, mapping various types of data into generic parameters. Use the following mapping guidelines:
+
+    - Any type of identifier (e.g., order ID, invoice ID, product ID, customer ID) should be mapped to 'ID'.
+    - Any type of name (e.g., product name, customer name, entity name) should be mapped to 'name'.
+    - Any type of monetary amount (e.g., total, balance, payment) should be mapped to 'amount'.
+    - Any price-related information should be mapped to 'price'.
+    - Any additional key-value pairs should be extracted and assigned generic parameter names based on their context.
+
+    Please return the extracted information in a well-structured JSON format.
+
+    Statement: "{query}"
     """
-    
+
     # Send the prompt to Gemini for classification
     response = model.generate_content(prompt)
     classification = response.text.strip().lower()
@@ -556,37 +548,138 @@ def extract_key_action_with_gemini(query: str) -> str:
         print("JSON contains null values")
         return "{}"
     #return classification
+def classify_query_with_gemini(query: str) -> str:
+    order_functions = [
+        "create_order",
+        "cancel_order",
+        "collect_payment",
+        "view_invoice",
+        "eligibility_check",
+        "health_check",
+        "generate_lead",
+        "get_orders",
+        "get_order_status",
+        "context_based",
+        "context-based"
+    ]
 
+    prompt = f"""
+    You are a helpful assistant. Classify the following query into one of these categories:
+1. create_order
+2. cancel_order
+3. collect_payment
+4. view_invoice
+5. eligibility_check
+6. health_check
+7. generate_lead
+8. get_orders
+9. get_order_status
+10. context_based
 
-#---------------------------------------------------------------------------------------------------------------------
+Rules for classification:
+- If the query explicitly mentions creating an order, classify it as 'create_order'.
+- If the query explicitly mentions cancelling an order, classify it as 'cancel_order'.
+- If the query is about making a payment or collecting money, classify it as 'collect_payment'.
+- If the query is about viewing or requesting an invoice, classify it as 'view_invoice'.
+- If the query pertains to checking eligibility for a service or program or anything else, classify it as 'eligibility_check'.
+- If the query is about checking the status of an application or system, classify it as 'health_check'.
+- If the query seeks to generate a lead for potential sales or contacts, classify it as 'generate_lead'.
+- If the query is about retrieving all orders and **explicitly mentions an order ID**, classify it as 'get_orders'.
+- If the query asks for the status of a specific order, classify it as 'get_order_status'.
+- If no specific order ID is mentioned for retrieving orders or statuses, classify the query as 'context_based'.
 
-def get_gemini_response(query: str, context: List[str], session_id: str, extract_data: bool = False) -> str:
+Examples:
+- "I want to place an order" -> create_order
+- "Cancel my recent order" -> cancel_order
+- "How do I pay for my order?" -> collect_payment
+- "Can I see my invoice?" -> view_invoice
+- "Am I eligible for this promotion?" -> eligibility_check
+- "Is the server running smoothly?" -> health_check
+- "I need more information on your services" -> generate_lead
+- "Show me all my orders with ID #12345" -> get_orders
+- "What is the status of my order #12345?" -> get_order_status
+- "Show me my last order" -> context_based (since no order ID is mentioned)
+- "What's your return policy?" -> context_based
+- "What is my last order?" -> context_based
+
+Query: "{query}"
+
+Classification:
+    """
+
+    # Send the prompt to Gemini for classification
+    response = model.generate_content(prompt)
+    classification = response.text.strip().lower()
+    print(classification)
+    for i in order_functions:  
+        if i in classification:
+            print("Gemini Classification:", i)
+            if i == "context-based":
+                return "context_based"
+            return i
+def prompt_gemini(query: str) -> str:
+    order_functions = [
+    "create_order",
+    "cancel_order",
+    "collect_payment",
+    "view_invoice",
+    "context_based"
+]
+    prompt = f"""
+    You are a helpful assistant. Classify the following query into one of these categories:
+    1. create_order
+    2. cancel_order
+    3. collect_payment
+    4. view_invoice
+    5. context_based
+
+    Rules for classification:
+    - If the query explicitly mentions creating an order, classify as 'create_order'.
+    - If the query explicitly mentions cancelling an order, classify as 'cancel_order'.
+    - If the query is about making a payment or collecting money, classify as 'collect_payment'.
+    - If the query is about viewing or requesting an invoice, classify as 'view_invoice'.
+    - For any other type of query that doesn't fit the above categories, classify as 'context_based'.
+
+    Examples:
+    - "I want to place an order" -> create_order
+    - "Cancel my recent order" -> cancel_order
+    - "How do I pay for my order?" -> collect_payment
+    - "Can I see my invoice?" -> view_invoice
+    - "What's your return policy?" -> context_based
+
+    Query: "{query}"
+
+    Classification:
+    """
+
+    # Send the prompt to Gemini for classification
+    response = model.generate_content(prompt)
+    classification = response.text.strip().lower()
+    print(classification)
+    return classification
+def get_gemini_response(query: str, context: List[str], session_id: str, extract_data: bool = False,documentID: str = None) -> str:
     history = session_history.get(session_id, [])
 
     # Classify the query using Flan-T5
-    action = classify_query_with_flan(query)
+    #action = classify_query_with_flan(query)
+    action = classify_query_with_gemini(query)
     action = action.lower()
     if action != "context_based":
         # If action is identified, extract necessary details
-        action_response = execute_action(action, query,session_id)
-        
+        action_response = execute_action(action, query,session_id, document_id=documentID)
         # Append the action execution to session history
         session_history.setdefault(session_id, []).append({"query": query, "response": action_response})
         return True, action_response
-
+    print("\n\n\n ")
+    print(history)
     # Build the combined prompt
     prompt = build_combined_prompt(query, context, history)
-    print("SENT PROMPT TO GEMINI :", prompt)
-
+    #print("SENT PROMPT TO GEMINI :", prompt)
     # Get response from Gemini
     response = model.generate_content(prompt)
-    
-
     response_text = response.text.strip().lower()
-
     # Save the query and response in session history
     session_history.setdefault(session_id, []).append({"query": query, "response": response.text})
-
     return False, response.text
 
 
@@ -599,24 +692,31 @@ def upload_document():
     doc_name = document.filename
 
     # Validate document format
-    if not doc_name.endswith(('.pdf', '.ppt', '.docx', '.jpg', '.jpeg', '.png')):
+    if not doc_name.endswith(('.pdf', '.ppt', '.docx', '.jpg', '.jpeg', '.png', '.txt', '.json', '.csv','.txt','.pptx')):
         return jsonify({"error": "Invalid document format. Only PDF, PPT, DOCX, and images are supported."}), 400
-
+    
+        #print(data)
     try:
         # Save the uploaded file temporarily
         upload_path = os.path.join("uploads", doc_name)
         document.save(upload_path)
+        
 
         # Extract text from the uploaded document
         text = extract_text_from_file(upload_path)
+        print(text)
         if text is None:
             return jsonify({"error": f"Unsupported document format or failed to extract text from {doc_name}."}), 400
-
+        elif text == "JSON_DATA":
+            return jsonify({"Success": f"Action taken successfully.."}), 200
         # Generate a unique document ID
         document_id = "doc_" + os.urandom(6).hex()
 
         # Split text into lines for processing
         lines = text.splitlines()
+        print("SEPARATED: ")
+        for line in lines:
+            print(line)
 
         # Store extracted text into ChromaDB with metadata
         documents = [line for line in lines if line.strip()]
@@ -634,9 +734,6 @@ def upload_document():
 
     except Exception as e:
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
-    
-
-#---------------------------------------------------------------------------------------------------------------------
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -645,34 +742,28 @@ def chat():
     session_id = request.headers.get('x-session-id')
     query = data.get('query')
     document_id = data.get('document_id')  # Optional document ID
-
-    if not query:
-        return jsonify({"error": "Query is required."}), 400
+    if not query or not isinstance(query, str):
+        return jsonify({"error": "Query is required and must be a string oooh."}), 400
+    if query is None:
+        return jsonify({"error": "Query is missing or None."}), 400
+    # Validate that the query is provided and is a string
+    if not query or not isinstance(query, str):
+        return jsonify({"error": "Query is required and must be a string."}), 400
 
     try:
+        # Handle pending actions
         if session_id in conversation_state and "pending_action" in conversation_state[session_id]:
             pending_action = conversation_state[session_id]["pending_action"]
             order_id = conversation_state[session_id].get("order_id")
             payment_id = conversation_state[session_id].get("payment_id")
             invoice_id = conversation_state[session_id].get("invoice_id")
-
+            print("query:" , query)
+            print(type(query))
             if query.lower() in ["yes", "confirm"]:
-                if pending_action == "cancel_order":
-                    response = confirm_action(pending_action, order_id)
-                    # Clear pending action after confirming
-                    del conversation_state[session_id]
-                    return jsonify({"bot_message": response}), 200
-                elif pending_action == "collect_payment":
-                    response = confirm_action(pending_action, payment_id)
-                    # Clear pending action after confirming
-                    del conversation_state[session_id]
-                    return jsonify({"bot_message": response}), 200
-                elif pending_action == "create_order":
-                    response = confirm_action(pending_action,order_id)
-                    # Clear pending action after confirming
-                    del conversation_state[session_id]
-                    return jsonify({"bot_message": response}), 200
-                # Handle other actions as needed
+                response = confirm_action(pending_action, order_id if pending_action in ["cancel_order", "create_order"] else payment_id)
+                # Clear pending action after confirming
+                del conversation_state[session_id]
+                return jsonify({"bot_message": response}), 200
 
             elif query.lower() in ["no", "cancel"]:
                 response = "Action cancelled."
@@ -680,27 +771,18 @@ def chat():
                 del conversation_state[session_id]
                 return jsonify({"bot_message": response}), 200
 
-        if document_id:
-            # Fetch context only from the specified document
-            context_results = collection.query(
-                query_texts=[query],
-                n_results=5,
-                include=["documents", "metadatas"],
-                where={"document_id": document_id}  # Limit to specific document by ID
-            )
-        else:
-            # Search across all documents when no document_id is provided
-            context_results = collection.query(
-                query_texts=[query],
-                n_results=5,
-                include=["documents", "metadatas"]  # No 'where' clause, consider the entire database
-            )
+        # Fetch context based on document_id
+        context_results = collection.query(
+            query_texts=[query],
+            n_results=5,
+            include=["documents", "metadatas"],
+            where={"document_id": document_id} if document_id else None  # Use None if no document_id
+        )
 
         # If no relevant documents are found
         if not context_results["documents"]:
             return jsonify({"error": "No relevant information found in the database."}), 404
 
-        # Extract the relevant context and metadata (line number and document name)
         # Flattening documents and metadata
         context = [doc for docs in context_results["documents"] for doc in docs]  # Flatten documents
         metadata = [meta for metas in context_results["metadatas"] for meta in metas]  # Flatten metadata
@@ -710,21 +792,17 @@ def chat():
             return jsonify({"error": "Context is not in the expected format."}), 500
 
         # Get response from Gemini model
-        #response = get_gemini_response(query, context, session_id) + "\n\n"
-        action_flag, response = get_gemini_response(query, context, session_id)
+        action_flag, response = get_gemini_response(query, context, session_id, documentID=document_id)
 
         if action_flag:
             return jsonify({"bot_message": response}), 200
 
-
-        # Prepare the reference excerpts and metadata (line number and document name)
-        references = []
-        for i, (doc, meta) in enumerate(zip(context, metadata)):
-            references.append({
-                "excerpt": doc[:200],  # Show the first 200 characters of the relevant context
-                "line_number": meta["line_number"],
-                "document_name": meta["filename"]
-            })
+        # Prepare reference excerpts and metadata
+        references = [{
+            "excerpt": doc[:200],  # Show the first 200 characters of the relevant context
+            "line_number": meta["line_number"],
+            "document_name": meta["filename"]
+        } for doc, meta in zip(context, metadata)]
 
         # Format the response with relevant metadata
         response_data = {
@@ -736,9 +814,6 @@ def chat():
 
     except Exception as e:
         return jsonify({"error": f"An internal error occurred: {str(e)}"}), 500
-
-#---------------------------------------------------------------------------------------------------------------------
-
 
 
 def main(collection_name: str = "documents_collection", persist_directory: str = ".") -> None:
@@ -770,6 +845,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(collection_name=args.collection_name, persist_directory=args.persist_directory)
-
-
-#---------------------------------------------------------------------------------------------------------------------
