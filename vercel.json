@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "index.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb",  
+        "memory": 1024,           
+        "maxDuration": 30         
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/chat",
+      "dest": "index.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "index.py"
+    }
+  ],
+  "env": {
+    "GOOGLE_API_KEY": "AIzaSyD7VrRJrSa3W7u0syiZpWldChRCTiWLp-4" 
+  }
+}
