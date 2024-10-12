@@ -23,6 +23,7 @@ import numpy as np
 from pdf2image import convert_from_path
 import re
 from docx import Document
+import ijson
 
 base_url = "https://hackrx-ps4.vercel.app"
 # Initialize conversation state
@@ -146,6 +147,7 @@ def extract_text_from_txt(file_path):
 def extract_text_from_file(file_path):
     """Extract text based on the file type."""
     _, extension = os.path.splitext(file_path)
+    
     if extension.lower() == ".pdf":
         return extract_text_from_pdf(file_path)
     elif extension.lower() in [".ppt", ".pptx"]:
@@ -157,13 +159,13 @@ def extract_text_from_file(file_path):
     elif extension.lower() == ".docx":
         return extract_text_from_docx(file_path)
     elif extension.lower() == ".json":
-        # Static variables for testing purposes
+        # Open the file and load the JSON data with UTF-8 encoding
         """static_order_id = 12345
         static_mobile = "555-1234"
         static_action = "create_order"
         with open(file_path, 'r') as file:
                 products = json.load(file)
-                data = file.read()
+                #data = file.read()
                 for product in products:
                     hello = create_order(
                 order_id=static_order_id,
@@ -174,21 +176,65 @@ def extract_text_from_file(file_path):
                 #is_available=product['is_available'],
                 action=static_action
             )
-                    print(hello)
-        return "JSON_DATA"""
-        return extract_text_JSON(file_path)
+                    print(hello)"""
+        extracted_text = extract_text_JSON_from_file(file_path)
+        return clean_text(extracted_text)
     else:
         return None
-    
-def extract_text_JSON(json_object):
+
+"""def extract_text_JSON(json_object, indent_level=0):
+
     lines = []
+    indent = '    ' * indent_level  # Create indentation for better readability
+
     if isinstance(json_object, dict):
         for key, value in json_object.items():
-            lines.append(f'{key}: {value}')  # You can change this to just `lines.append(value)` to omit keys
+            lines.append(f'{indent}{key}:')  # Indent and print the key
+            lines.append(extract_text_JSON(value, indent_level + 1))  # Recursive call for value
     elif isinstance(json_object, list):
-        for item in json_object:
-            lines.extend(extract_text_JSON(item))  # Flatten the list
-    return lines
+        for index, item in enumerate(json_object):
+            lines.append(f'{indent}Item {index + 1}:')  # Indent and label the item
+            lines.append(extract_text_JSON(item, indent_level + 1))  # Recursive call for item
+    else:
+        # Directly append values, with indentation
+        lines.append(f'{indent}{json_object}')  # Append the value with indentation
+
+    return '\n'.join(filter(None, lines)) + '.'+ '\n' # Join lines into a single string, filtering out empty strings"""
+
+def extract_text_JSON(json_object, indent_level=0):
+    """Extract text from a JSON object with indentation."""
+    lines = []
+    indent = '    ' * indent_level  # Create indentation for better readability
+
+    if isinstance(json_object, dict):
+        for key, value in json_object.items():
+            if isinstance(value, (dict, list)):
+                # For nested dictionaries or lists, call the function recursively
+                nested_value = extract_text_JSON(value, indent_level + 1)
+                lines.append(f'{indent}{key}: {nested_value.strip()}')  # Append key with nested values
+            else:
+                # Directly append values, with indentation
+                lines.append(f'{indent}{key}: {value}')  # Append the key-value pair directly
+    elif isinstance(json_object, list):
+        for index, item in enumerate(json_object):
+            if isinstance(item, (dict, list)):
+                # For nested dictionaries or lists, call the function recursively
+                nested_value = extract_text_JSON(item, indent_level + 1)
+                lines.append(f'{indent}Item {index + 1}: {nested_value.strip()}')  # Append with item index
+            else:
+                # Directly append values
+                lines.append(f'{indent}Item {index + 1}: {item}')  # Append the item directly
+
+    # Join lines into a single string with a period after each line
+    return '\n'.join(lines) + '.'  # Ensure there's a period at the end of the string
+
+def extract_text_JSON_from_file(file_path):
+    """Extract text from a JSON file."""
+    with open(file_path, 'r', encoding='utf-8') as json_file:
+        # Load the entire JSON file
+        json_object = json.load(json_file)  # This will load the whole JSON object into memory
+        return extract_text_JSON(json_object)  # Call the extraction function
+
 
 def clean_text(text):
     """Remove unnecessary empty lines and extra spaces from extracted text."""
@@ -296,8 +342,12 @@ def classify_query_with_flan(query: str, actions_list: list = DEFAULT_ACTIONS_LI
 
 def build_combined_prompt(query: str, context: List[str], history: List[Dict[str, str]]) -> str:
     base_prompt = """
-        I am going to ask you a question, which I would like you to answer strictly based on the given context.
-        If there is not enough information in the context or clear to answer the question, make a guess based on the context. YOUR RESPONSE SHOULD BE STRICTLY BASED ON CONTEXT.
+       I am going to ask you a question, and your answer should be based strictly on the context provided from the document. 
+      Please extract all relevant information from the document to generate a comprehensive and accurate response.
+        If the context is insufficient or unclear, make a reasonable inference based on the document content. 
+        However, ensure that your response is directly aligned with the user query and only uses the document as the source of truth. 
+        The response must be informative, provide as much relevant detail as possible, and never leave the question 
+        unanswered unless absolutely necessary. If any additional key information is missing, prompt the user for further clarification.
         """
     user_prompt = f"The question is '{query}'. Here is all the context you have: {' '.join(context)}"
     history_prompt = "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
@@ -305,51 +355,36 @@ def build_combined_prompt(query: str, context: List[str], history: List[Dict[str
 
     return f"{base_prompt} {history_prompt} {user_prompt}"
 
-def classify_action_with_gemini(query: str) -> str:
-    """
-    Use Gemini to classify the query into an action or a context-based query.
-    """
-    prompt = f"""
-    You are a helpful assistant. Classify the following query as one of the actions: create_order, cancel_order, collect_payment, view_invoice, 
-    or context_based. 
-    
-    Query: "{query}"
-    """
-    
-    # Send the prompt to Gemini for classification
-    response = model.generate_content(prompt)
-    classification = response.text.strip().lower()
-    
-    # Check if the classification matches one of the known actions
-    for action in DEFAULT_ACTIONS_LIST:
-        if action in classification:
-            return action
-    
-    return "context_based"
+# Common headers
+headers = {
+    "x-team": "GPTeam"
+}
 
 # 1. Generate Lead
 def generate_lead(mobile):
     url = f"{base_url}/generate-lead"
     data = {"mobile": mobile}
-    response = requests.post(url, json=data)
+    response = requests.post(url, json=data, headers=headers)
     return response.json()
 
 # 2. Eligibility Check
 def eligibility_check(mobile):
     url = f"{base_url}/eligibility-check"
     data = {"mobile": mobile}
-    response = requests.post(url, json=data)
+    response = requests.post(url, json=data, headers=headers)
     return response.json()
 
 # 3. Health Check
 def health_check():
     url = f"{base_url}/health-check"
-    response = requests.get(url)
+    response = requests.get(url, headers=headers)
     return response.json()
+
 # Static values for order_id, mobile, and action
 order_id = 12345  # Static order ID
 mobile = "555-1234"  # Static mobile number
 action = "create_order"  # Static action
+
 # 4. Create Order
 def create_order(order_id, mobile, product_id, product_name, product_price, action="create_order"):
     url = f"{base_url}/order"
@@ -361,21 +396,21 @@ def create_order(order_id, mobile, product_id, product_name, product_price, acti
         "productPrice": product_price,
         "action": action  # Include action parameter
     }
-    response = requests.post(url, json=data)
+    response = requests.post(url, json=data, headers=headers)
     print(response.json())
     return response.json()
 
 # 5. Get All Orders
 def get_orders():
     url = f"{base_url}/orders"
-    response = requests.get(url)
+    response = requests.get(url, headers=headers)
     return response.json()
 
 # 6. Get Order Status
 def get_order_status(order_id, mobile):
     url = f"{base_url}/order-status"
     params = {"orderId": order_id, "mobile": mobile}
-    response = requests.get(url, params=params)
+    response = requests.get(url, params=params, headers=headers)
     return response.json()
 
 
@@ -464,6 +499,7 @@ def upload_document():
 
         # Extract text from the uploaded document
         text = extract_text_from_file(upload_path)
+        print(text)
         if text is None:
             return jsonify({"error": f"Unsupported document format or failed to extract text from {doc_name}."}), 400
         elif text == "JSON_DATA":
@@ -473,6 +509,9 @@ def upload_document():
 
         # Split text into lines for processing
         lines = text.splitlines()
+        print("SEPARATED: ")
+        for line in lines:
+            print(line)
 
         # Store extracted text into ChromaDB with metadata
         documents = [line for line in lines if line.strip()]
