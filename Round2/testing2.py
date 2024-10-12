@@ -438,18 +438,17 @@ def classify_query_with_flan(query: str, actions_list: list = DEFAULT_ACTIONS_LI
 
 
 def build_combined_prompt(query: str, context: List[str], history: List[Dict[str, str]]) -> str:
-    base_prompt = """
-       I am going to ask you a question, and your answer should be based strictly on the context provided from the document. 
-      Please extract all relevant information from the document to generate a comprehensive and accurate response.
-        If the context is insufficient or unclear, make a reasonable inference based on the document content. 
-        However, ensure that your response is directly aligned with the user query and only uses the document as the source of truth. 
-        The response must be informative, provide as much relevant detail as possible, and never leave the question 
-        unanswered unless absolutely necessary. If any additional key information is missing, prompt the user for further clarification.
+    base_prompt = """I am going to ask you a question, and your answer should be based strictly on the context provided from the document, along with the history of our previous interactions. 
+Please extract all relevant information from the document to generate a comprehensive and accurate response, while also taking into account the knowledge from the responses you have already provided during this conversation.
+If the context is insufficient or unclear, make a reasonable inference based on both the document content and the history of our conversation. Ensure that your response is directly aligned with the user query and that you use both the document as the source of truth and the stored conversation history.
+Your response must be informative, provide as much relevant detail as possible, and never leave the question unanswered unless absolutely necessary. If any additional key information is missing, prompt the user for further clarification.
         """
     user_prompt = f"The question is '{query}'. Here is all the context you have: {' '.join(context)}"
-    history_prompt = "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
+    #history_prompt = "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
+    history_prompt= "Here is all the history you have:\n" + "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
+    history_prompt = clean_text(history_prompt)
     print()
-    print("HISTORY : {history_prompt}")
+    print("HISTORY : ", f"{history_prompt}")
 
     return f"{base_prompt} {history_prompt} {user_prompt}"
 
