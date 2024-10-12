@@ -23,7 +23,6 @@ import numpy as np
 from pdf2image import convert_from_path
 import re
 from docx import Document
-import ijson
 
 base_url = "https://hackrx-ps4.vercel.app"
 # Initialize conversation state
@@ -48,6 +47,10 @@ DEFAULT_ACTIONS_LIST = ["create_order", "cancel_order", "collect_payment", "view
 app = Flask(__name__)
 CORS(app)
 collection = None
+
+order_id = 12345  # Static order ID
+mobile = "555-1234"  # Static mobile number
+action = "create_order"  # Static action
 
 # Now you can retrieve the API key from the environment variable when needed
 google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -257,6 +260,9 @@ def execute_action(action_name: str, query: str, session_id: str) -> str:
     order_id = extracted_data.get("order_id")
     payment_id = extracted_data.get("payment_id")
     invoice_id = extracted_data.get("invoice_id")
+    product_id = extracted_data.get("product_id")
+    product_name = extracted_data.get("product_name")
+    product_price = extracted_data.get("product_price")
     print("Order ID:", order_id, "Payment ID:", payment_id, "Invoice ID:", invoice_id)
     # Check for missing identifiers and prompt the user
     missing_info = []
@@ -276,17 +282,20 @@ def execute_action(action_name: str, query: str, session_id: str) -> str:
     # Proceed with the action if all required identifiers are present
     confirmation_message = ""
     if action_name == "create_order":
-        confirmation_message = f"Are you sure you want to create an order with ID {order_id}?"
-        conversation_state[session_id]["pending_action"] = "create_order"
-        conversation_state[session_id]["order_id"] = order_id
+        confirmation_message = create_order(order_id, mobile, product_id, product_name, product_price)
+        #confirmation_message = f"Are you sure you want to create an order with ID {order_id}?"
+        #conversation_state[session_id]["pending_action"] = "create_order"
+        #conversation_state[session_id]["order_id"] = order_id
     elif action_name == "cancel_order":
-        confirmation_message = f"Are you sure you want to cancel your order with ID {order_id}?"
-        conversation_state[session_id]["pending_action"] = "cancel_order"
-        conversation_state[session_id]["order_id"] = order_id
+        confirmation_message= f"Your order with ID {order_id} has been cancelled."
+        #confirmation_message = f"Are you sure you want to cancel your order with ID {order_id}?"
+        #conversation_state[session_id]["pending_action"] = "cancel_order"
+        #conversation_state[session_id]["order_id"] = order_id
     elif action_name == "collect_payment":
-        confirmation_message = f"Are you sure you want to collect the payment with ID {payment_id}?"
-        conversation_state[session_id]["pending_action"] = "collect_payment"
-        conversation_state[session_id]["payment_id"] = payment_id
+        confirmation_message = f"Your order with ID {order_id} has been cancelled."
+        #confirmation_message = f"Are you sure you want to collect the payment with ID {payment_id}?"
+        #conversation_state[session_id]["pending_action"] = "collect_payment"
+        #conversation_state[session_id]["payment_id"] = payment_id
     elif action_name == "view_invoice":
         return f"Here is your invoice with ID {invoice_id}."
     else:
@@ -302,6 +311,7 @@ def confirm_action(action_name: str, identifier: str) -> str:
         return f"Your order with ID {identifier} has been cancelled."
     
     elif action_name == "create_order":
+        
         return f"Order with ID {identifier} has been created successfully."
 
     elif action_name == "collect_payment":
@@ -351,7 +361,8 @@ def build_combined_prompt(query: str, context: List[str], history: List[Dict[str
         """
     user_prompt = f"The question is '{query}'. Here is all the context you have: {' '.join(context)}"
     history_prompt = "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
-    #print("Combined Prompt:", f"{base_prompt} {history_prompt} {user_prompt}")
+    print()
+    print("Combined Prompt:", f"{base_prompt} HISTORY : {history_prompt} USER: {user_prompt}")
 
     return f"{base_prompt} {history_prompt} {user_prompt}"
 
@@ -381,9 +392,7 @@ def health_check():
     return response.json()
 
 # Static values for order_id, mobile, and action
-order_id = 12345  # Static order ID
-mobile = "555-1234"  # Static mobile number
-action = "create_order"  # Static action
+
 
 # 4. Create Order
 def create_order(order_id, mobile, product_id, product_name, product_price, action="create_order"):
@@ -447,12 +456,54 @@ def extract_key_action_with_gemini(query: str) -> str:
         print("JSON contains null values")
         return "{}"
     #return classification
+def classify_query_with_gemini(query: str) -> str:
+    order_functions = [
+    "create_order",
+    "cancel_order",
+    "collect_payment",
+    "view_invoice",
+    "context_based"
+]
+    prompt = f"""
+    You are a helpful assistant. Classify the following query into one of these categories:
+    1. create_order
+    2. cancel_order
+    3. collect_payment
+    4. view_invoice
+    5. context_based
 
+    Rules for classification:
+    - If the query explicitly mentions creating an order, classify as 'create_order'.
+    - If the query explicitly mentions cancelling an order, classify as 'cancel_order'.
+    - If the query is about making a payment or collecting money, classify as 'collect_payment'.
+    - If the query is about viewing or requesting an invoice, classify as 'view_invoice'.
+    - For any other type of query that doesn't fit the above categories, classify as 'context_based'.
+
+    Examples:
+    - "I want to place an order" -> create_order
+    - "Cancel my recent order" -> cancel_order
+    - "How do I pay for my order?" -> collect_payment
+    - "Can I see my invoice?" -> view_invoice
+    - "What's your return policy?" -> context_based
+
+    Query: "{query}"
+
+    Classification:
+    """
+
+    # Send the prompt to Gemini for classification
+    response = model.generate_content(prompt)
+    classification = response.text.strip().lower()
+    print(classification)
+    for i in order_functions:  
+        if i in classification:
+            return i
 def get_gemini_response(query: str, context: List[str], session_id: str, extract_data: bool = False) -> str:
     history = session_history.get(session_id, [])
 
     # Classify the query using Flan-T5
-    action = classify_query_with_flan(query)
+    #action = classify_query_with_flan(query)
+    action = classify_query_with_gemini(query)
     action = action.lower()
     if action != "context_based":
         # If action is identified, extract necessary details
@@ -461,7 +512,8 @@ def get_gemini_response(query: str, context: List[str], session_id: str, extract
         # Append the action execution to session history
         session_history.setdefault(session_id, []).append({"query": query, "response": action_response})
         return True, action_response
-
+    print("\n\n\n ")
+    print(history)
     # Build the combined prompt
     prompt = build_combined_prompt(query, context, history)
     print("SENT PROMPT TO GEMINI :", prompt)
