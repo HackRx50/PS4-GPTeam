@@ -598,6 +598,7 @@ Examples:
 - "Show me all my orders" -> get_orders
 - "What is the status of my order #12345?" -> get_order_status
 - "What's your return policy?" -> context_based
+- "What is my last order?" -> context_based
 
 Query: "{query}"
 
