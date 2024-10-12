@@ -26,6 +26,9 @@ import re
 # Initialize conversation state
 conversation_state = defaultdict(dict)
 
+# Global dictionary to store session-specific variables, with lists for multiple entries
+session_data = {}
+
 # Suppress specific warnings from Hugging Face transformers library
 warnings.filterwarnings("ignore", message="You are using the default legacy behaviour")
 warnings.filterwarnings("ignore", message="It will be set to `False` by default.")
@@ -271,10 +274,7 @@ def get_order_status(order_id, mobile):
 
 #---------------------------------------------------------------------------------------------------------------------
 
-import json
 
-# Global dictionary to store session-specific variables, with lists for multiple entries
-session_data = {}
 
 def execute_action(action_name: str, query: str, session_id: str) -> str:
     """
