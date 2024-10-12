@@ -221,10 +221,8 @@ def get_order_status(order_id, mobile):
 
 #---------------------------------------------------------------------------------------------------------------------
 
-def execute_action(action_name: str, query: str, session_id: str) -> str:
-    """
-    Executes the specified action based on the provided action name and query.
-    """
+"""def execute_action(action_name: str, query: str, session_id: str) -> str:
+    
     key_points_json = extract_key_action_with_gemini(query)
     extracted_data = json.loads(key_points_json)
     print("Extracted data:", extracted_data)
@@ -268,10 +266,110 @@ def execute_action(action_name: str, query: str, session_id: str) -> str:
     else:
         return "No action taken."
 
-    return confirmation_message
+    return confirmation_message"""
 
 
 #---------------------------------------------------------------------------------------------------------------------
+
+import json
+
+# Global dictionary to store session-specific variables, with lists for multiple entries
+session_data = {}
+
+def execute_action(action_name: str, query: str, session_id: str) -> str:
+    """
+    Executes the specified action based on the provided action name and query.
+    Handles multiple values for certain parameters.
+    """
+    global session_data
+    
+    # Ensure session data exists for the session_id and initialize lists for multiple values
+    if session_id not in session_data:
+        session_data[session_id] = {
+            "order_id": None,
+            "payment_id": None,
+            "invoice_id": None,
+            "mobile": [],  # Allow multiple mobile numbers
+            "product_id": [],  # Allow multiple product IDs
+            "product_name": [],  # Allow multiple product names
+            "product_price": []  # Allow multiple product prices
+        }
+
+    # Extract key information
+    key_points_json = extract_key_action_with_gemini(query)
+    extracted_data = json.loads(key_points_json)
+    print("Extracted data:", extracted_data)
+
+    # Append extracted values to session-specific variables if they allow multiple entries
+    if extracted_data.get("order_id"):
+        session_data[session_id]["order_id"] = extracted_data.get("order_id")
+    if extracted_data.get("payment_id"):
+        session_data[session_id]["payment_id"] = extracted_data.get("payment_id")
+    if extracted_data.get("invoice_id"):
+        session_data[session_id]["invoice_id"] = extracted_data.get("invoice_id")
+    
+    # For multiple entries, append the new data to the respective lists
+    if extracted_data.get("mobile"):
+        session_data[session_id]["mobile"].append(extracted_data.get("mobile"))
+    if extracted_data.get("product_id"):
+        session_data[session_id]["product_id"].append(extracted_data.get("product_id"))
+    if extracted_data.get("product_name"):
+        session_data[session_id]["product_name"].append(extracted_data.get("product_name"))
+    if extracted_data.get("product_price"):
+        session_data[session_id]["product_price"].append(extracted_data.get("product_price"))
+    
+    print("Session Data:", session_data[session_id])
+
+    # Check for missing identifiers
+    missing_info = []
+    
+    if action_name == "create_order" and session_data[session_id]["order_id"] is None:
+        missing_info.append("Order ID")
+    if action_name == "cancel_order" and session_data[session_id]["order_id"] is None:
+        missing_info.append("Order ID")
+    if action_name == "collect_payment" and session_data[session_id]["payment_id"] is None:
+        missing_info.append("Payment ID")
+    if action_name == "view_invoice" and session_data[session_id]["invoice_id"] is None:
+        missing_info.append("Invoice ID")
+    if action_name == "create_order" and not session_data[session_id]["mobile"]:
+        missing_info.append("Mobile Number")
+    if action_name == "create_order" and not session_data[session_id]["product_id"]:
+        missing_info.append("Product ID")
+    if action_name == "create_order" and not session_data[session_id]["product_name"]:
+        missing_info.append("Product Name")
+    if action_name == "create_order" and not session_data[session_id]["product_price"]:
+        missing_info.append("Product Price")
+    
+    print(missing_info)
+    if missing_info:
+        return f"Please provide the following information: {', '.join(missing_info)}."
+
+    # Proceed with the action if all required identifiers are present
+    confirmation_message = ""
+    if action_name == "create_order":
+        confirmation_message = f"Are you sure you want to create an order with ID {session_data[session_id]['order_id']} and products: {session_data[session_id]['product_name']}?"
+        conversation_state[session_id]["pending_action"] = "create_order"
+        conversation_state[session_id]["order_id"] = session_data[session_id]["order_id"]
+        conversation_state[session_id]["mobile"] = session_data[session_id]["mobile"]
+        conversation_state[session_id]["product_id"] = session_data[session_id]["product_id"]
+        conversation_state[session_id]["product_name"] = session_data[session_id]["product_name"]
+        conversation_state[session_id]["product_price"] = session_data[session_id]["product_price"]
+    elif action_name == "cancel_order":
+        confirmation_message = f"Are you sure you want to cancel your order with ID {session_data[session_id]['order_id']}?"
+        conversation_state[session_id]["pending_action"] = "cancel_order"
+        conversation_state[session_id]["order_id"] = session_data[session_id]["order_id"]
+    elif action_name == "collect_payment":
+        confirmation_message = f"Are you sure you want to collect the payment with ID {session_data[session_id]['payment_id']}?"
+        conversation_state[session_id]["pending_action"] = "collect_payment"
+        conversation_state[session_id]["payment_id"] = session_data[session_id]["payment_id"]
+    elif action_name == "view_invoice":
+        return f"Here is your invoice with ID {session_data[session_id]['invoice_id']}."
+    else:
+        return "No action taken."
+
+    return confirmation_message
+
+#----------------------------------------------------------------------------------------------
 
 def confirm_action(action_name: str, order_id: str = None, mobile: str = None, product_id: str = None, product_name: str = None, product_price: float = None) -> str:
     """
