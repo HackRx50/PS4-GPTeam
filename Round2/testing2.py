@@ -240,6 +240,7 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
     Executes the specified action based on the provided action name and query.
     Dynamically retrieves missing information from a collection if needed.
     """
+    print("query", query)
     # Extract key points using Gemini
     key_points_json = extract_key_action_with_gemini(query)
     extracted_data = json.loads(key_points_json)
@@ -256,23 +257,23 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
         return f"A lead has been successfully generated for mobile {mobile}. Response: {response}"
     
     # Extracted generic data from the query
-    entity_id = extracted_data.get("ID")  # Generic ID
+    entity_id = extracted_data.get("id")  # Generic id
     name = extracted_data.get("name")  # Generic name
     amount = extracted_data.get("amount")  # Generic amount
     price = extracted_data.get("price")  # Generic price
 
-    print(f"ID: {entity_id}, Name: {name}, Amount: {amount}, Price: {price}")
+    print(f"id: {entity_id}, Name: {name}, Amount: {amount}, Price: {price}")
 
     # Check for missing information based on the action type
     missing_info = []
     if action_name == "create_entity" and entity_id is None:
-        missing_info.append("ID")
+        missing_info.append("id")
     if action_name == "cancel_entity" and entity_id is None:
-        missing_info.append("ID")
+        missing_info.append("id")
     if action_name == "process_payment" and amount is None:
-        missing_info.append("Amount")
+        missing_info.append("amount")
     if action_name == "view_entity" and entity_id is None:
-        missing_info.append("ID")
+        missing_info.append("id")
 
     print("Missing info:", missing_info)
 
@@ -286,7 +287,7 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
                 query_texts=[missing_query],   # Dynamic query
                 n_results=5,
                 include=["documents", "metadatas"],
-                where={"document_id": document_id}  # Filter based on document ID
+                where={"document_id": document_id}  # Filter based on document id
             )
             print("Context results:", context_results)
 
@@ -306,17 +307,17 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
                     print("Found Data:", found_data)
 
                     # Update the missing information if found
-                    if 'ID' in missing_info and 'ID' in found_data:
-                        entity_id = found_data['ID']
-                        missing_info.remove('ID')
+                    if 'id' in missing_info and 'id' in found_data:
+                        entity_id = found_data['id']
+                        missing_info.remove('id')
 
-                    if 'Amount' in missing_info and 'amount' in found_data:
+                    if 'amount' in missing_info and 'amount' in found_data:
                         amount = found_data['amount']
-                        missing_info.remove('Amount')
+                        missing_info.remove('amount')
 
-                    if 'Name' in missing_info and 'name' in found_data:
+                    if 'name' in missing_info and 'name' in found_data:
                         name = found_data['name']
-                        missing_info.remove('Name')
+                        missing_info.remove('name')
                 else:
                     print(f"Unexpected data format in query result: {result}")
 
@@ -333,13 +334,14 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
     # Proceed with the action if all required information is present
     confirmation_message = ""
     if action_name == "create_order":
-        confirmation_message = f"Entity with ID {entity_id}, name {name}, and price {price} has been created."
+        confirmation_message = create_order(entity_id, mobile, name, product_price=100,product_name="Product 1", action="create_order")
+        #confirmation_message = f"Entity with id {entity_id}, name {name}, and price {price} has been created."
     elif action_name == "cancel_order":
-        confirmation_message = f"Entity with ID {entity_id} has been cancelled."
+        confirmation_message = f"Entity with id {entity_id} has been cancelled."
     elif action_name == "process_payment":
         confirmation_message = f"Payment of amount {amount} has been processed."
     elif action_name == "view_entity":
-        confirmation_message = f"Here is the entity with ID {entity_id}."
+        confirmation_message = f"Here is the entity with id {entity_id}."
     elif action_name == "eligibility_check":
         response = eligibility_check(mobile)
         return f"The eligibility check for mobile {mobile} has been completed. Results: {response}"
@@ -349,7 +351,9 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
     elif action_name == "generate_lead":
         response = generate_lead(mobile)
         return f"A lead has been successfully generated for mobile {mobile}. Response: {response}"
-        #confirmation_message = f"Eligibility check for mobile {mobile} and product ID {entity_id} has been processed."
+    elif action_name == "get_order_status":
+        response = get_order_status(entity_id, mobile)
+        return f"The order status for order {entity_id} has been retrieved. Response: {response}"
     else:
         confirmation_message = "No action taken."
     return confirmation_message
@@ -388,7 +392,7 @@ def confirm_action(action_name: str, identifier: str, mobile: str = None, produc
         return f"A lead has been successfully generated for mobile {mobile}. Response: {response}"
 
     elif action_name == "get_orders":
-        response = get_orders()
+        response = get_order_status(identifier, mobile)
         return f"Here are the orders associated with ID {identifier}. Response: {response}"
 
     elif action_name == "get_order_status":
@@ -504,11 +508,19 @@ def extract_key_action_with_gemini(query: str) -> str:
     Use Gemini to extract key information from the query.
     """
     prompt = f"""
-    You are a helpful assistant. Extract key information from the below statement, like order id, amount and return in json format. 
-    
-    statement: "{query}"
+    You are a helpful assistant. Extract key information from the statement below, mapping various types of data into generic parameters. Use the following mapping guidelines:
+
+    - Any type of identifier (e.g., order ID, invoice ID, product ID, customer ID) should be mapped to 'ID'.
+    - Any type of name (e.g., product name, customer name, entity name) should be mapped to 'name'.
+    - Any type of monetary amount (e.g., total, balance, payment) should be mapped to 'amount'.
+    - Any price-related information should be mapped to 'price'.
+    - Any additional key-value pairs should be extracted and assigned generic parameter names based on their context.
+
+    Please return the extracted information in a well-structured JSON format.
+
+    Statement: "{query}"
     """
-    
+
     # Send the prompt to Gemini for classification
     response = model.generate_content(prompt)
     classification = response.text.strip().lower()
