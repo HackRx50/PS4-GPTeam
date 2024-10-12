@@ -281,7 +281,7 @@ def execute_action(action_name: str, query: str, session_id: str) -> str:
     Executes the specified action based on the provided action name and query.
     Handles multiple values for certain parameters.
     """
-    global session_data
+    #global session_data
     
     # Ensure session data exists for the session_id and initialize lists for multiple values
     if session_id not in session_data:
@@ -323,23 +323,49 @@ def execute_action(action_name: str, query: str, session_id: str) -> str:
     # Check for missing identifiers
     missing_info = []
     
-    if action_name == "create_order" and session_data[session_id]["order_id"] is None:
-        missing_info.append("Order ID")
-    if action_name == "cancel_order" and session_data[session_id]["order_id"] is None:
-        missing_info.append("Order ID")
-    if action_name == "collect_payment" and session_data[session_id]["payment_id"] is None:
-        missing_info.append("Payment ID")
-    if action_name == "view_invoice" and session_data[session_id]["invoice_id"] is None:
-        missing_info.append("Invoice ID")
-    if action_name == "create_order" and not session_data[session_id]["mobile"]:
-        missing_info.append("Mobile Number")
-    if action_name == "create_order" and not session_data[session_id]["product_id"]:
-        missing_info.append("Product ID")
-    if action_name == "create_order" and not session_data[session_id]["product_name"]:
-        missing_info.append("Product Name")
-    if action_name == "create_order" and not session_data[session_id]["product_price"]:
-        missing_info.append("Product Price")
+    # Check for identifiers based on action
+    if action_name == "create_order":
+        if session_data[session_id]["order_id"] is None:
+            missing_info.append("Order ID")
+        if not session_data[session_id]["mobile"]:
+            missing_info.append("Mobile Number")
+        if not session_data[session_id]["product_id"]:
+            missing_info.append("Product ID")
+        if not session_data[session_id]["product_name"]:
+            missing_info.append("Product Name")
+        if not session_data[session_id]["product_price"]:
+            missing_info.append("Product Price")
+
+    elif action_name == "cancel_order":
+        if session_data[session_id]["order_id"] is None:
+            missing_info.append("Order ID")
     
+    elif action_name == "collect_payment":
+        if session_data[session_id]["payment_id"] is None:
+            missing_info.append("Payment ID")
+
+    elif action_name == "generate_lead":
+        if not session_data[session_id]["mobile"]:
+            missing_info.append("Mobile Number")
+
+    elif action_name == "check_eligibility":
+        if not session_data[session_id]["mobile"]:
+            missing_info.append("Mobile Number")
+
+    elif action_name == "health_check":
+        # No specific data is required for health check, but can be noted if needed
+        pass
+
+    elif action_name == "get_orders":
+        # No specific data is required for getting orders
+        pass
+
+    elif action_name == "get_order_status":
+        if session_data[session_id]["order_id"] is None:
+            missing_info.append("Order ID")
+        if not session_data[session_id]["mobile"]:
+            missing_info.append("Mobile Number")
+
     print(missing_info)
     if missing_info:
         return f"Please provide the following information: {', '.join(missing_info)}."
@@ -362,13 +388,25 @@ def execute_action(action_name: str, query: str, session_id: str) -> str:
         confirmation_message = f"Are you sure you want to collect the payment with ID {session_data[session_id]['payment_id']}?"
         conversation_state[session_id]["pending_action"] = "collect_payment"
         conversation_state[session_id]["payment_id"] = session_data[session_id]["payment_id"]
-    elif action_name == "view_invoice":
-        return f"Here is your invoice with ID {session_data[session_id]['invoice_id']}."
+    elif action_name == "generate_lead":
+        confirmation_message = f"Generating lead for mobile number: {', '.join(session_data[session_id]['mobile'])}."
+        conversation_state[session_id]["pending_action"] = "generate_lead"
+    elif action_name == "check_eligibility":
+        confirmation_message = f"Checking eligibility for mobile number: {', '.join(session_data[session_id]['mobile'])}."
+        conversation_state[session_id]["pending_action"] = "check_eligibility"
+    elif action_name == "health_check":
+        confirmation_message = "Performing health check."
+        conversation_state[session_id]["pending_action"] = "health_check"
+    elif action_name == "get_orders":
+        confirmation_message = "Retrieving all orders."
+        conversation_state[session_id]["pending_action"] = "get_orders"
+    elif action_name == "get_order_status":
+        confirmation_message = f"Getting status for order ID {session_data[session_id]['order_id']}."
+        conversation_state[session_id]["pending_action"] = "get_order_status"
     else:
         return "No action taken."
 
     return confirmation_message
-
 #----------------------------------------------------------------------------------------------
 
 def confirm_action(action_name: str, order_id: str = None, mobile: str = None, product_id: str = None, product_name: str = None, product_price: float = None) -> str:
