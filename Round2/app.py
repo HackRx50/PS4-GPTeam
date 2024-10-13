@@ -447,6 +447,7 @@ Please extract all relevant information from the document to generate a comprehe
 If the context is insufficient or unclear, make a reasonable inference and a best guess based on both the document content and the history of our conversation. Ensure that your response is directly aligned with the user query and that you use both the document as the source of truth and the stored conversation history.
 Your response must be informative, provide as much relevant detail as possible, and never leave the question unanswered unless absolutely necessary. If any additional key information is missing, prompt the user for further clarification.
         """
+    #query = create_questions(query)
     user_prompt = f"The question is '{query}'. Here is all the context you have: {' '.join(context)}"
     #history_prompt = "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
     history_prompt= "Here is all the history you have:\n" + "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
