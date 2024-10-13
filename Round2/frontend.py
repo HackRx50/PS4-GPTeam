@@ -2,11 +2,16 @@ import chainlit as cl
 import requests
 import json
 import os
+from deep_translator import GoogleTranslator  # Use deep-translator
 
 # Store the last uploaded document ID
 current_document_id = None
 # Maintain a list of uploaded documents with their original file names and IDs
 uploaded_documents = {}
+# Default language is English
+current_language = 'en'
+# Initialize the deep-translator object (English by default, will change as needed)
+translator = GoogleTranslator(source='en', target='en')
 
 def extract_text_JSON(json_object, indent_level=0):
     """Extract text from a JSON object with indentation."""
@@ -37,7 +42,16 @@ def extract_text_JSON(json_object, indent_level=0):
 
 @cl.on_message
 async def on_message(message: cl.Message):
-    global current_document_id, uploaded_documents
+    global current_document_id, uploaded_documents, current_language, translator
+
+    # Check if the message is to set the language
+    if message.content.startswith("set language "):
+        lang = message.content[len("set language "):].strip().lower()
+        # Update the current language based on user input
+        current_language = lang
+        translator = GoogleTranslator(source='en', target=current_language)  # Update the translator's target language
+        await cl.Message(content=f"Language set to {lang}").send()
+        return  # Exit the function after setting the language
 
     # URLs for your Flask server
     url_chat = "http://localhost:3000/chat"
@@ -64,6 +78,7 @@ async def on_message(message: cl.Message):
         else:
             await cl.Message(content="No documents uploaded.").send()
         return  # Exit the function after listing
+
     # Check if there are any files attached
     if message.elements:
         # Processing the first attached document (if any)
@@ -129,12 +144,19 @@ async def send_chat_message(url_chat, query, document_id, user_id, session_id):
 
         # Parse the JSON response from the Flask server
         response_data = response.json()  # Ensure the response is parsed as JSON
-        
+
+        # Extract the bot message and translate it
+        bot_message = response_data.get("bot_message", "")
+        if current_language != 'en':  # If the language is not English, translate the message
+            translated_bot_message = translator.translate(bot_message)
+        else:
+            translated_bot_message = bot_message
+
         # Extract text from the JSON response
         extracted_text = extract_text_JSON(response_data)
 
-        # Send the extracted text as a response to Chainlit
-        await cl.Message(content=extracted_text).send()
+        # Send the translated bot message as a response to Chainlit
+        await cl.Message(content=translated_bot_message).send()
 
     except requests.exceptions.JSONDecodeError:
         # Handle case where response is not valid JSON
