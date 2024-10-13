@@ -124,7 +124,9 @@ async def on_message(message: cl.Message):
         # If no files are attached, proceed with normal chat processing
         query = message.content  # Get user message
         if current_document_id:
-            query += f"\n(Document ID: {current_document_id})"
+            #query += f"\n(Document ID: {current_document_id})"
+            pass
+        document_id = current_document_id
         
         await send_chat_message(url_chat, query, current_document_id, user_id, session_id)
 
