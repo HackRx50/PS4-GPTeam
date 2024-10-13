@@ -789,7 +789,7 @@ def chat():
         return jsonify({"error": "Query is required and must be a string."}), 400
     print("QUESTIONS CREATED:")
     print(create_questions(query))
-    query = create_questions(query)
+    #query = create_questions(query)
     try:
         # Handle pending actions
         if session_id in conversation_state and "pending_action" in conversation_state[session_id]:
