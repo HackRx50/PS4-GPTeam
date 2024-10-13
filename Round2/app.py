@@ -787,8 +787,8 @@ def chat():
     # Validate that the query is provided and is a string
     if not query or not isinstance(query, str):
         return jsonify({"error": "Query is required and must be a string."}), 400
-    print("QUESTIONS CREATED:")
-    print(create_questions(query))
+    #print("QUESTIONS CREATED:")
+    #print(create_questions(query))
     #query = create_questions(query)
     try:
         # Handle pending actions
