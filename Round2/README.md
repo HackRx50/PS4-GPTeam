@@ -42,12 +42,21 @@ This repository contains a powerful assistant built using Flask and various mach
    ```
 
 ## Usage
-To run the application, use the following command:
-```bash
-python app.py
-```
+To run the application, follow these steps:
 
-The application will start on `http://localhost:3000`.
+1. Start the Flask application:
+   ```bash
+   python app.py
+   ```
+
+   The application will start on `http://localhost:3000`.
+
+2. Run the Chainlit interface:
+   ```bash
+   chainlit run frontend.py
+   ```
+
+   You can now chat with the assistant through the Chainlit interface.
 
 ## API Endpoints
 
