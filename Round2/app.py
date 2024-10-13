@@ -241,6 +241,7 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
     Executes the specified action based on the provided action name and query.
     Dynamically retrieves missing information from a collection if needed.
     """
+    print("action", action_name)
     print("query", query)
     # Extract key points using Gemini
     key_points_json = extract_key_action_with_gemini(query)
@@ -281,7 +282,7 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
         missing_info.append("id")
 
     print("Missing info:", missing_info)
-
+    missing_items_string = ", ".join(missing_info)
     # If there is any missing info, formulate a dynamic query to retrieve it
     if missing_info:
         for missing_field in missing_info:
@@ -290,7 +291,7 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
             # Query the collection to retrieve the missing info
             context_results = collection.query(
                 query_texts=[missing_query],   # Dynamic query
-                n_results=5,
+                n_results=7,
                 include=["documents", "metadatas"],
                 where={"document_id": document_id}  # Filter based on document id
             )
@@ -301,9 +302,8 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
                 if isinstance(result, list) and len(result) > 0:
                     document_text = result[0]  # Access the string from the list
                     print("Document Text:", document_text)
-
                     # Use Gemini to extract relevant information from the document
-                    gemini_response = extract_key_action_with_gemini(document_text)
+                    gemini_response = extract_key_action_with_gemini_missing(document_text,missing_info)
                     extracted_data = json.loads(gemini_response)
                     print("Extracted Data from Gemini:", extracted_data)
 
@@ -339,7 +339,8 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
     # Proceed with the action if all required information is present
     confirmation_message = ""
     if action_name == "create_order":
-        random2 = random.randint(1000, 9999)
+        if random2 is None:
+            random2 = random.randint(1000, 9999)
         confirmation_message = create_order(order_id=random2,product_id=entity_id, mobile=mobile, product_name=name, product_price=100, action="create_order")
         #confirmation_message = f"Entity with id {entity_id}, name {name}, and price {price} has been created."
     elif action_name == "cancel_order":
@@ -358,6 +359,9 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
         response = generate_lead(mobile)
         return f"A lead has been successfully generated for mobile {mobile}. Response: {response}"
     elif action_name == "get_order_status":
+        response = get_order_status(entity_id, mobile)
+        return f"The order status for order {entity_id} has been retrieved. Response: {response}"
+    elif action_name == "get_orders":
         response = get_order_status(entity_id, mobile)
         return f"The order status for order {entity_id} has been retrieved. Response: {response}"
     else:
@@ -440,7 +444,7 @@ def classify_query_with_flan(query: str, actions_list: list = DEFAULT_ACTIONS_LI
 def build_combined_prompt(query: str, context: List[str], history: List[Dict[str, str]]) -> str:
     base_prompt = """I am going to ask you a question, and your answer should be based strictly on the context provided from the document, along with the history of our previous interactions. 
 Please extract all relevant information from the document to generate a comprehensive and accurate response, while also taking into account the knowledge from the responses you have already provided during this conversation.
-If the context is insufficient or unclear, make a reasonable inference based on both the document content and the history of our conversation. Ensure that your response is directly aligned with the user query and that you use both the document as the source of truth and the stored conversation history.
+If the context is insufficient or unclear, make a reasonable inference and a best guess based on both the document content and the history of our conversation. Ensure that your response is directly aligned with the user query and that you use both the document as the source of truth and the stored conversation history.
 Your response must be informative, provide as much relevant detail as possible, and never leave the question unanswered unless absolutely necessary. If any additional key information is missing, prompt the user for further clarification.
         """
     user_prompt = f"The question is '{query}'. Here is all the context you have: {' '.join(context)}"
@@ -508,6 +512,33 @@ def get_order_status(order_id, mobile):
     response = requests.get(url, params=params, headers=headers)
     return response.json()
 
+def create_questions(query: str) -> str:
+    # Create a nuanced and engaging prompt for the model
+    prompt = f"""
+    You are a sophisticated AI assistant trained to convert statements into concise questions. Your task is to analyze the following statement and determine the best possible question that reflects the user's intent.
+
+    **Instructions**:
+    1. If the input is already a question, return it unchanged.
+    2. If the input is a statement, transform it into a clear and concise question that captures the essence of what the user might want to know.
+    3. If the statement is unclear or does not indicate a specific user intent, generate a question that reflects a possible inquiry based on the given information. Make it the best possible question from the query.
+    4. Ensure that your question is grammatically correct and contextually appropriate.
+    5. Do not include any explanations or additional commentary—just provide the question.
+
+    **Statement**: {query}
+
+    For example: 
+    - If the input is "Document ID for the report," the output should be "What is the document ID for the report?"
+    - If the input is "title," the output should be "What is the title of the document?"
+    """
+    
+    # Generate the response using the model
+    response = model.generate_content(prompt)
+    
+    # Extract and clean the response
+    classification = response.text.strip()
+    
+    return classification
+
 def extract_key_action_with_gemini(query: str) -> str:
     """
     Use Gemini to extract key information from the query.
@@ -547,6 +578,46 @@ def extract_key_action_with_gemini(query: str) -> str:
     except json.JSONDecodeError:
         print("JSON contains null values")
         return "{}"
+def extract_key_action_with_gemini_missing(query: str, missing_items_string: list) -> str:
+    """
+    Use Gemini to extract key information from the query.
+    """
+    prompt = f"""
+    You are a helpful assistant. Extract key informations {missing_items_string} from the statement below, with missing items being the key and value being extracted info. 
+
+    - Map any type of identifier (e.g., order ID, invoice ID, product ID, customer ID) to 'ID'.
+    - Map any type of name (e.g., product name, customer name, entity name) to 'name'.
+    - Map any type of monetary amount (e.g., total, balance, payment) to 'amount'.
+    - Map any price-related information to 'price'.
+    - Additionally, check the following list for expected items that should be mentioned in the statement: {missing_items_string}.
+    - Extract which items from this list are missing in the statement and include them in a 'missing' list in the output.
+
+    Return the extracted information in a well-structured JSON format. REMEMBER YOU SHOULD EXTRACT ONLY {missing_items_string} AND NOT ANYTHING THAN THAT
+
+    Statement: "{query}"
+"""
+
+    # Send the prompt to Gemini for classification
+    response = model.generate_content(prompt)
+    classification = response.text.strip().lower()
+    #print("Gemini Key information before cleaning:", classification)
+    classification = classification.replace("json", "").strip() # Remove "json" from the string and strip leading/trailing whitespace
+    while classification.startswith('"') or classification.startswith("'") or classification.startswith("`"):
+        classification = classification[1:]  # Remove the first character if it's a quote
+    while classification.endswith('"') or classification.endswith("'") or classification.endswith("`"):
+        classification = classification[:-1]  # Remove the last character if it's a quote
+
+    # Remove backticks from the string
+    classification = classification.replace("`", "")
+    print("Gemini Key information after cleaning:", classification)
+     # Convert string to dictionary to ensure valid JSON and remove any null values
+    try:
+        extracted_data = json.loads(classification)
+        filtered_data = {k: v for k, v in extracted_data.items() if v is not None}
+        return json.dumps(filtered_data)  # Return as JSON without null values
+    except json.JSONDecodeError:
+        print("JSON contains null values")
+        return "{}"
     #return classification
 def classify_query_with_gemini(query: str) -> str:
     order_functions = [
@@ -564,7 +635,7 @@ def classify_query_with_gemini(query: str) -> str:
     ]
 
     prompt = f"""
-    You are a helpful assistant. Classify the following query into one of these categories:
+    You are a Classification expert. Strictly Classify the following query into one of these categories:
 1. create_order
 2. cancel_order
 3. collect_payment
@@ -587,6 +658,7 @@ Rules for classification:
 - If the query is about retrieving all orders and **explicitly mentions an order ID**, classify it as 'get_orders'.
 - If the query asks for the status of a specific order, classify it as 'get_order_status'.
 - If no specific order ID is mentioned for retrieving orders or statuses, classify the query as 'context_based'.
+- If the query is not of any of the first 9 categories, classify it as context_based.
 
 Examples:
 - "I want to place an order" -> create_order
@@ -618,42 +690,8 @@ Classification:
                 return "context_based"
             return i
 def prompt_gemini(query: str) -> str:
-    order_functions = [
-    "create_order",
-    "cancel_order",
-    "collect_payment",
-    "view_invoice",
-    "context_based"
-]
-    prompt = f"""
-    You are a helpful assistant. Classify the following query into one of these categories:
-    1. create_order
-    2. cancel_order
-    3. collect_payment
-    4. view_invoice
-    5. context_based
-
-    Rules for classification:
-    - If the query explicitly mentions creating an order, classify as 'create_order'.
-    - If the query explicitly mentions cancelling an order, classify as 'cancel_order'.
-    - If the query is about making a payment or collecting money, classify as 'collect_payment'.
-    - If the query is about viewing or requesting an invoice, classify as 'view_invoice'.
-    - For any other type of query that doesn't fit the above categories, classify as 'context_based'.
-
-    Examples:
-    - "I want to place an order" -> create_order
-    - "Cancel my recent order" -> cancel_order
-    - "How do I pay for my order?" -> collect_payment
-    - "Can I see my invoice?" -> view_invoice
-    - "What's your return policy?" -> context_based
-
-    Query: "{query}"
-
-    Classification:
-    """
-
     # Send the prompt to Gemini for classification
-    response = model.generate_content(prompt)
+    response = model.generate_content(query)
     classification = response.text.strip().lower()
     print(classification)
     return classification
@@ -749,7 +787,9 @@ def chat():
     # Validate that the query is provided and is a string
     if not query or not isinstance(query, str):
         return jsonify({"error": "Query is required and must be a string."}), 400
-
+    print("QUESTIONS CREATED:")
+    print(create_questions(query))
+    query = create_questions(query)
     try:
         # Handle pending actions
         if session_id in conversation_state and "pending_action" in conversation_state[session_id]:
