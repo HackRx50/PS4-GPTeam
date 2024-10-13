@@ -268,13 +268,22 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
 
     # Check for missing information based on the action type
     missing_info = []
-    if action_name == "create_entity" :
+    not_missing_info=[]
+    if action_name == "create_entity":
         if entity_id is None:
             missing_info.append("id")
         if name is None:
             missing_info.append("name")
-        missing_info.append("id")
-    if action_name == "cancel_entity" and entity_id is None:
+        if entity_id is not None:
+            not_missing_info.append(entity_id)
+        if name is not None:
+            not_missing_info.append(name)
+    if action_name == "create_enitiy" :
+        if entity_id is None:
+            missing_info.append("id")
+        if name is None:
+            missing_info.append("name")
+    if action_name == "cancel_order" and entity_id is None:
         missing_info.append("id")
     if action_name == "process_payment" and amount is None:
         missing_info.append("amount")
@@ -282,11 +291,29 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
         missing_info.append("id")
 
     print("Missing info:", missing_info)
+    print("Not missing info LIST:", not_missing_info)
     missing_items_string = ", ".join(missing_info)
+    not_missing_info = ", ".join(not_missing_info)
+    print("Not Missing Info String :", not_missing_info)
     # If there is any missing info, formulate a dynamic query to retrieve it
+    def extract_value(data, field):
+        """
+        Extracts the value from the provided data based on the field.
+        Returns a list if the value is a list, otherwise returns a string or None.
+        """
+        value = data.get(field)
+        if isinstance(value, list):
+            return value  # Return the list directly
+        elif isinstance(value, str):
+            return value  # Return the string directly
+        else:
+            return None  # Return None if the key doesn't exist or is neither str nor list
+
     if missing_info:
         for missing_field in missing_info:
-            missing_query = f"What is the {missing_field.lower()}?"
+            
+            missing_query = f"What is the {missing_field.lower()} with {not_missing_info} ?"
+            missing_hello = ("Missing Query:" + missing_query)
 
             # Query the collection to retrieve the missing info
             context_results = collection.query(
@@ -296,7 +323,7 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
                 where={"document_id": document_id}  # Filter based on document id
             )
             print("Context results:", context_results)
-
+            
             # Process query results and extract the missing information
             for result in context_results.get('documents', []):
                 if isinstance(result, list) and len(result) > 0:
@@ -312,17 +339,16 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
                     print("Found Data:", found_data)
 
                     # Update the missing information if found
-                    if 'id' in missing_info and 'id' in found_data:
-                        entity_id = found_data['id']
-                        missing_info.remove('id')
+                    for field in missing_info:
+                        if field in found_data:
+                            if field == 'id':
+                                entity_id = extract_value(found_data, 'id')
+                            elif field == 'name':
+                                name = extract_value(found_data, 'name')
+                            elif field == 'amount':
+                                amount = extract_value(found_data, 'amount')
+                            missing_info.remove(field)
 
-                    if 'amount' in missing_info and 'amount' in found_data:
-                        amount = found_data['amount']
-                        missing_info.remove('amount')
-
-                    if 'name' in missing_info and 'name' in found_data:
-                        name = found_data['name']
-                        missing_info.remove('name')
                 else:
                     print(f"Unexpected data format in query result: {result}")
 
@@ -339,10 +365,8 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
     # Proceed with the action if all required information is present
     confirmation_message = ""
     if action_name == "create_order":
-        if random2 is None:
-            random2 = random.randint(1000, 9999)
-        confirmation_message = create_order(order_id=random2,product_id=entity_id, mobile=mobile, product_name=name, product_price=100, action="create_order")
-        #confirmation_message = f"Entity with id {entity_id}, name {name}, and price {price} has been created."
+        order_id = random.randint(1, 1000)
+        confirmation_message = extract_text_JSON(create_order(order_id=order_id,product_id=entity_id, mobile=mobile, product_name=name, product_price=100, action="create_order"))
     elif action_name == "cancel_order":
         confirmation_message = f"Entity with id {entity_id} has been cancelled."
     elif action_name == "process_payment":
@@ -449,6 +473,7 @@ Your response must be informative, provide as much relevant detail as possible, 
         """
     #query = create_questions(query)
     user_prompt = f"The question is '{query}'. Here is all the context you have: {' '.join(context)}"
+    print("USER PROMPT : ", user_prompt)
     #history_prompt = "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
     history_prompt= "Here is all the history you have:\n" + "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
     history_prompt = clean_text(history_prompt)
