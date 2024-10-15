@@ -213,27 +213,46 @@ def clean_text(text):
     cleaned_text = re.sub(r'\n\s*\n', '\n', cleaned_text)
     return cleaned_text
 
+import json
 
 def search_json_for_keys(data, keys):
     """
-    Recursively search for the given keys in a nested JSON structure.
-    :param data: The JSON data (could be dict or list)
+    Recursively search for the given keys in a nested JSON structure, even if nested inside strings.
+    :param data: The JSON data (could be dict, list, or JSON string)
     :param keys: The list of keys to search for
     :return: A dictionary with found key-value pairs
     """
     found = {}
+
+    # If the data is a string, attempt to parse it as JSON, and continue if valid
+    if isinstance(data, str):
+        try:
+            # Try to load the JSON string
+            nested_data = json.loads(data)
+            # Recursively search in this parsed structure
+            return search_json_for_keys(nested_data, keys)
+        except json.JSONDecodeError:
+            pass  # If it's not a valid JSON string, continue
+
+    # If the data is a dictionary, iterate over its items
     if isinstance(data, dict):
         for key, value in data.items():
             if key in keys:
-                found[key] = value  # Found the key, add to result
-            elif isinstance(value, (dict, list)):
-                # Recursively search in nested structures
+                found[key] = value  # Found the key, add it to the result
+            elif isinstance(value, (dict, list, str)):
+                # Recursively search in nested structures, including strings that may contain JSON
                 found.update(search_json_for_keys(value, keys))
+    
+    # If the data is a list, iterate over the items
     elif isinstance(data, list):
         for item in data:
             found.update(search_json_for_keys(item, keys))
     
+    
     return found
+
+import json
+import random
 
 
 def execute_action(action_name: str, query: str, session_id: str, document_id: str = None) -> str:
@@ -241,61 +260,102 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
     Executes the specified action based on the provided action name and query.
     Dynamically retrieves missing information from a collection if needed.
     """
-    print("action", action_name)
-    print("query", query)
-    # Extract key points using Gemini
-    key_points_json = extract_key_action_with_gemini(query)
-    extracted_data = json.loads(key_points_json)
-    print("Extracted data:", extracted_data)
-
-    if action_name == "eligibility_check":
-        response = eligibility_check(mobile)
-        return f"The eligibility check for mobile {mobile} has been completed. Results: {response}"
-    elif action_name == "health_check":
-        response = health_check()
-        return f"The health check has been conducted. All systems are operational. Response: {response}"
-    elif action_name == "generate_lead":
-        response = generate_lead(mobile)
-        return f"A lead has been successfully generated for mobile {mobile}. Response: {response}"
-    
-    # Extracted generic data from the query
-    entity_id = extracted_data.get("id")  # Generic id
-    name = extracted_data.get("name")  # Generic name
-    amount = extracted_data.get("amount")  # Generic amount
-    price = extracted_data.get("price")  # Generic price
-
-    print(f"id: {entity_id}, Name: {name}, Amount: {amount}, Price: {price}")
-
-    # Check for missing information based on the action type
     missing_info = []
-    not_missing_info=[]
-    if action_name == "create_entity":
+    not_missing_info = {}
+    gemini_response_func = None
+    print("---- Starting execute_action ----")
+    print(f"Action Name: {action_name}")
+    print(f"Query: {query}")
+    print(f"Session ID: {session_id}")
+    print(f"Document ID: {document_id}")
+
+    # Extract key points using Gemini
+    try:
+        key_points_json = extract_key_action_with_gemini(query)
+        print("Key Points JSON:", key_points_json)
+        extracted_data = json.loads(key_points_json)
+        print("Extracted Data from Gemini Step 1:", extracted_data)
+        # Add extracted_data to not_missing_info
+        gemini_response_func = extracted_data
+        if isinstance(extracted_data, dict):
+            not_missing_info.update(extracted_data) 
+    except Exception as e:
+        print(f"Error during key extraction with Gemini: {e}")
+        return "Error during key extraction."
+
+    # Extracted generic data from the query
+    #entity_id = extracted_data.get("id")  # Generic id
+    entity_id = search_json_for_keys(extracted_data, ["id"]).get("id")
+    name = search_json_for_keys(extracted_data, ["name"]).get("name")
+    amount = search_json_for_keys(extracted_data, ["amount"]).get("amount")
+    price = search_json_for_keys(extracted_data, ["price"]).get("price")
+    print("Enity ID:", entity_id, "Entity ID type:", type(entity_id), "Name:", name, "Amount:", amount, "Price:", price)
+    #mobile = extracted_data.get("mobile")  # Extract mobile number if available
+
+    # Handle name field
+    if isinstance(name, list) and name:
+        print("Multiple names found:", name)
+        # Handle multiple names: prompt the user or choose the first one for now
+        name = name[0]  # Defaulting to the first name for now
+        print(f"Using the first name from the list: {name}")
+
+    elif isinstance(name, dict) and name:
+        print("Name is a dictionary:", name)
+        # Handle dictionary: extract a specific key or take the first key-value pair
+        if 'name' in name:
+            name = name['name']  # Extract the value of the 'name' key if it exists
+            print(f"Using the value of 'name' from the dictionary: {name}")
+        else:
+            # Default to the first key-value pair if no 'name' key is found
+            first_key = next(iter(name))
+            name = name[first_key]
+            print(f"Using the first value from the dictionary: {name}")
+
+    elif not isinstance(name, str):
+        print("Name is neither a list, dict, nor a string, setting to None.")
+        name = None
+
+    print(f"Extracted values -> ID: {entity_id}, Name: {name}, Amount: {amount}, Price: {price}, Mobile: {mobile}")
+
+    # Check for missing information
+
+    if action_name == "create_order":
+        print("Processing create_order action")
+    
+        if entity_id is None:
+            missing_info.append("id")
+        else:
+            not_missing_info["id"] = entity_id  # Add to not_missing_info dictionary
+
+        if name is None:
+            missing_info.append("name")
+        else:
+            not_missing_info["name"] = name  # Add to not_missing_info dictionary
+
+    elif action_name == "create_entity":
+        print("Processing create_entity action")
         if entity_id is None:
             missing_info.append("id")
         if name is None:
             missing_info.append("name")
-        if entity_id is not None:
-            not_missing_info.append(entity_id)
-        if name is not None:
-            not_missing_info.append(name)
-    if action_name == "create_enitiy" :
-        if entity_id is None:
-            missing_info.append("id")
-        if name is None:
-            missing_info.append("name")
-    if action_name == "cancel_order" and entity_id is None:
+    elif action_name == "cancel_order" and entity_id is None:
+        print("Processing cancel_order action")
         missing_info.append("id")
-    if action_name == "process_payment" and amount is None:
+    elif action_name == "get_order_status":
+        if entity_id is None:
+            missing_info.append("id")
+        if name is None:
+            missing_info.append("name")
+    elif action_name == "process_payment" and amount is None:
+        print("Processing process_payment action")
         missing_info.append("amount")
-    if action_name == "view_entity" and entity_id is None:
+    elif action_name == "view_entity" and entity_id is None:
+        print("Processing view_entity action")
         missing_info.append("id")
 
-    print("Missing info:", missing_info)
-    print("Not missing info LIST:", not_missing_info)
-    missing_items_string = ", ".join(missing_info)
-    not_missing_info = ", ".join(not_missing_info)
-    print("Not Missing Info String :", not_missing_info)
-    # If there is any missing info, formulate a dynamic query to retrieve it
+    print("Missing Info:", missing_info)
+    print("Not Missing Info:", not_missing_info)
+
     def extract_value(data, field):
         """
         Extracts the value from the provided data based on the field.
@@ -311,35 +371,44 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
 
     if missing_info:
         for missing_field in missing_info:
-            
-            missing_query = f"What is the {missing_field.lower()} with {not_missing_info} ?"
-            missing_hello = ("Missing Query:" + missing_query)
+            condition_string = ""
+            if not_missing_info:  # Ensure not_missing_info is not empty
+                # Create a condition string from the dictionary
+                condition_string = " and ".join([f"{key} {value}" for key, value in not_missing_info.items()])
+                missing_query = f"What is the {missing_field} for {condition_string}?"
+                print("Missing Query:", missing_query)
+            else:
+                missing_query = f"What is the {missing_field}?"
 
             # Query the collection to retrieve the missing info
-            context_results = collection.query(
-                query_texts=[missing_query],   # Dynamic query
-                n_results=7,
-                include=["documents", "metadatas"],
-                where={"document_id": document_id}  # Filter based on document id
-            )
-            print("Context results:", context_results)
-            
+            try:
+                context_results = collection.query(
+                    query_texts=[missing_query],
+                    n_results=7,
+                    include=["documents", "metadatas"],
+                    where={"document_id": document_id}  # Filter based on document id
+                )
+                #print("Context results:", context_results)
+            except Exception as e:
+                print(f"Error during collection query: {e}")
+                return "Error during collection query."
+
             # Process query results and extract the missing information
+            # Process query results and extract the missing information
+        try:
             for result in context_results.get('documents', []):
-                if isinstance(result, list) and len(result) > 0:
+                if isinstance(result, list) and result:
                     document_text = result[0]  # Access the string from the list
                     print("Document Text:", document_text)
-                    # Use Gemini to extract relevant information from the document
-                    gemini_response = extract_key_action_with_gemini_missing(document_text,missing_info)
-                    extracted_data = json.loads(gemini_response)
-                    print("Extracted Data from Gemini:", extracted_data)
-
-                    # Search for the required missing information using the recursive function
-                    found_data = search_json_for_keys(extracted_data, missing_info)
+                    gemini_response = extract_key_action_with_gemini(f"What is the {missing_field} for {condition_string}? from the document statement below {document_text}")
+                    print("Extracted Data from Gemini (Missing Info):", gemini_response)
+                    gemini_response_func = gemini_response
+                    # Search for the required missing information
+                    found_data = search_json_for_keys(gemini_response, missing_info)
                     print("Found Data:", found_data)
 
                     # Update the missing information if found
-                    for field in missing_info:
+                    for field in missing_info[:]:  # Use a copy of the list to avoid modifying it while iterating
                         if field in found_data:
                             if field == 'id':
                                 entity_id = extract_value(found_data, 'id')
@@ -347,13 +416,18 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
                                 name = extract_value(found_data, 'name')
                             elif field == 'amount':
                                 amount = extract_value(found_data, 'amount')
-                            missing_info.remove(field)
+                            missing_info.remove(field)  # Remove the field only if found
 
-                else:
-                    print(f"Unexpected data format in query result: {result}")
+                    # Check if we have filled all missing info after each document
+                    if not missing_info:
+                        break  # Exit the loop if all required information is retrieved
+        except Exception as e:
+            print(f"Error during missing info extraction: {e}")
+            return "Error during missing info extraction: " + str(e)
 
         # If missing info is still not retrieved, prompt the user for manual input
         if missing_info:
+            print(f"Missing info still required: {missing_info}")
             conversation_state[session_id]["pending_action"] = action_name
             conversation_state[session_id]["missing_info"] = missing_info
             conversation_state[session_id]["query"] = query
@@ -364,33 +438,117 @@ def execute_action(action_name: str, query: str, session_id: str, document_id: s
 
     # Proceed with the action if all required information is present
     confirmation_message = ""
-    if action_name == "create_order":
-        order_id = random.randint(1, 1000)
-        confirmation_message = extract_text_JSON(create_order(order_id=order_id,product_id=entity_id, mobile=mobile, product_name=name, product_price=100, action="create_order"))
-    elif action_name == "cancel_order":
-        confirmation_message = f"Entity with id {entity_id} has been cancelled."
-    elif action_name == "process_payment":
-        confirmation_message = f"Payment of amount {amount} has been processed."
-    elif action_name == "view_entity":
-        confirmation_message = f"Here is the entity with id {entity_id}."
-    elif action_name == "eligibility_check":
-        response = eligibility_check(mobile)
-        return f"The eligibility check for mobile {mobile} has been completed. Results: {response}"
-    elif action_name == "health_check":
-        response = health_check()
-        return f"The health check has been conducted. All systems are operational. Response: {response}"
-    elif action_name == "generate_lead":
-        response = generate_lead(mobile)
-        return f"A lead has been successfully generated for mobile {mobile}. Response: {response}"
-    elif action_name == "get_order_status":
-        response = get_order_status(entity_id, mobile)
-        return f"The order status for order {entity_id} has been retrieved. Response: {response}"
-    elif action_name == "get_orders":
-        response = get_order_status(entity_id, mobile)
-        return f"The order status for order {entity_id} has been retrieved. Response: {response}"
-    else:
-        confirmation_message = "No action taken."
+    try:
+        if action_name == "create_order":
+            print("Extracting values from Gemini response:", gemini_response_func)
+            try:
+                if gemini_response_func is not None:
+                    # Convert gemini_response_func from string to dictionary
+                    if isinstance(gemini_response_func, str):
+                        extracted_values = json.loads(gemini_response_func)  # Convert from string to dictionary
+                    elif isinstance(gemini_response_func, dict):
+                        extracted_values = gemini_response_func  # It's already a dictionary
+                    else:
+                        return "Error: gemini_response_func is neither a valid string nor a dictionary." + type(gemini_response_func)
+                    
+                    # Ensure required values are present
+                    entity_id = extracted_values.get("id")
+                    name = extracted_values.get("name")
+                    price = extracted_values.get("price", 100)  # Default price if not found
+                    
+                    if name:  # Ensure name is present
+                        order_id = random.randint(1, 1000)
+                         
+                        # Call the create_order function and get both the confirmation statement and the JSON response
+                        statement, order_response = create_order(
+                            order_id=order_id,
+                            product_id=entity_id,
+                            product_name=name,
+                            product_price=price,
+                            action="create_order",
+                            mobile=mobile
+                        )
+
+                        # Assuming extract_text_JSON expects a JSON response, pass order_response to it
+                        confirmation_message = extract_text_JSON(order_response)
+
+                        confirmation_message = confirmation_message + '\n' + statement
+                    else:
+                        return "Error: Missing product name for order creation."
+                else:
+                    return "Error: gemini_response_func is None"
+
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON: {e}")
+                return "Error: Invalid JSON format in gemini_response_func"
+        elif action_name == "get_order_status":
+            if gemini_response_func is not None:
+                    # Convert gemini_response_func from string to dictionary
+                    if isinstance(gemini_response_func, str):
+                        extracted_values = json.loads(gemini_response_func)  # Convert from string to dictionary
+                    elif isinstance(gemini_response_func, dict):
+                        extracted_values = gemini_response_func  # It's already a dictionary
+                    else:
+                        return "Error: gemini_response_func is neither a valid string nor a dictionary." + type(gemini_response_func)
+                    entity_id = extracted_values.get("id")
+            response = get_order_status(entity_id, mobile)
+            response = extract_text_JSON(response)
+            confirmation_message = response
+
+        elif action_name == "cancel_order":
+            confirmation_message = f"Entity with id {entity_id} has been cancelled."
+        elif action_name == "process_payment":
+            confirmation_message = f"Payment of amount {amount} has been processed."
+        elif action_name == "view_entity":
+            confirmation_message = f"Here is the entity with id {entity_id}."
+        elif action_name == "eligibility_check":
+            response = eligibility_check(mobile)
+            return f"The eligibility check for mobile {mobile} has been completed. Results: {response}"
+        elif action_name == "health_check":
+            response = health_check()
+            return f"The health check has been conducted. All systems are operational. Response: {response}"
+        elif action_name == "generate_lead":
+            response = generate_lead(mobile)
+            return f"A lead has been successfully generated for mobile {mobile}. Response: {response}"
+        elif action_name == "get_orders":
+            response = get_orders()
+            return f"The orders for mobile {mobile} have been retrieved. Response: {response}"
+        else:
+            confirmation_message = "No valid action taken."
+
+    except Exception as e:
+        print(f"Error during action execution: {e}")
+        return f"Error during {action_name} execution."
+
     return confirmation_message
+def clean_JSON(text):
+    classification = text
+    classification = classification.strip().lower()
+    
+    # Remove "json" from the string and strip leading/trailing whitespace
+    classification = classification.replace("json", "").strip()
+    
+    # Remove the first character if it's a quote
+    while classification.startswith('"') or classification.startswith("'") or classification.startswith("`"):
+        classification = classification[1:]
+    
+    # Remove the last character if it's a quote
+    while classification.endswith('"') or classification.endswith("'") or classification.endswith("`"):
+        classification = classification[:-1]
+    
+    # Remove backticks from the string
+    classification = classification.replace("`", "")
+    
+    #print("Gemini Key information after cleaning:", classification)
+    
+    # Convert string to dictionary to ensure valid JSON and remove any null values
+    try:
+        extracted_data = json.loads(classification)
+        filtered_data = {k: v for k, v in extracted_data.items() if v is not None}
+        return json.dumps(filtered_data)  # Return as JSON without null values
+    except json.JSONDecodeError:
+        print("JSON contains null values")
+        return "{}"
 def confirm_action(action_name: str, identifier: str, mobile: str = None, product_id: str = None, product_name: str = None, product_price: float = None) -> str:
     """
     Confirms the specified action and executes it if confirmed.
@@ -466,20 +624,20 @@ def classify_query_with_flan(query: str, actions_list: list = DEFAULT_ACTIONS_LI
 
 
 def build_combined_prompt(query: str, context: List[str], history: List[Dict[str, str]]) -> str:
-    base_prompt = """I am going to ask you a question, and your answer should be based strictly on the context provided from the document, along with the history of our previous interactions. 
-Please extract all relevant information from the document to generate a comprehensive and accurate response, while also taking into account the knowledge from the responses you have already provided during this conversation.
-If the context is insufficient or unclear, make a reasonable inference and a best guess based on both the document content and the history of our conversation. Ensure that your response is directly aligned with the user query and that you use both the document as the source of truth and the stored conversation history.
-Your response must be informative, provide as much relevant detail as possible, and never leave the question unanswered unless absolutely necessary. If any additional key information is missing, prompt the user for further clarification.
+    base_prompt = """I am going to ask you a question, and your answer should be based strictly on the history of our previous interactions and context provided of the document.
+If the question is out of context of the document or cannot be answered based on the available context and history, make a best guess on the strictly context and history.say 
+If still impossible, say 'Can not answer, question out of context'. You may use your general knowledge to answer questions based on the context and history only. Do not use your general knowledge to answer anything out of context or history provided. If user says do not answer from the document, you are permitted to use general knowledge, otherwise Do not use your general knowledge.
+Your response must be informative, concise and short provide as much relevant detail as possible, and never leave the question unanswered unless absolutely necessary.
         """
     #query = create_questions(query)
     user_prompt = f"The question is '{query}'. Here is all the context you have: {' '.join(context)}"
-    print("USER PROMPT : ", user_prompt)
+    #print("USER PROMPT : ", user_prompt)
     #history_prompt = "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
-    history_prompt= "Here is all the history you have:\n" + "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
+    history_prompt= "Here is all the history of our previous interactions you have:\n" + "\n".join([f"User: {item['query']}\nBot: {item['response']}" for item in history])
     history_prompt = clean_text(history_prompt)
     print()
-    print("HISTORY : ", f"{history_prompt}")
-
+    #print("HISTORY : ", f"{history_prompt}")
+    print("COMBINED PROMPT : ", f"{base_prompt} \n HISTORY: {history_prompt} \n USER PROMPT: {user_prompt}")
     return f"{base_prompt} {history_prompt} {user_prompt}"
 
 # Common headers
@@ -489,6 +647,7 @@ headers = {
 
 # 1. Generate Lead
 def generate_lead(mobile):
+    
     url = f"{base_url}/generate-lead"
     data = {"mobile": mobile}
     response = requests.post(url, json=data, headers=headers)
@@ -523,7 +682,9 @@ def create_order(order_id, mobile, product_id, product_name, product_price, acti
     }
     response = requests.post(url, json=data, headers=headers)
     print(response.json())
-    return response.json()
+    statement = (f"Your order for  Order ID: {order_id},  Product Name: {product_name}, Product ID: {product_id}, Product Price: {product_price} has been created successfully.")
+    print(statement)
+    return statement,response.json()
 
 # 5. Get All Orders
 def get_orders():
@@ -570,81 +731,54 @@ def extract_key_action_with_gemini(query: str) -> str:
     Use Gemini to extract key information from the query.
     """
     prompt = f"""
-    You are a helpful assistant. Extract key information from the statement below, mapping various types of data into generic parameters. Use the following mapping guidelines:
+You are an information extraction expert. Your task is to analyze the statement below and map specific types of data into predefined generic parameters. Follow these strict rules for mapping and return the result in a flat JSON format (no nested structures), ensuring that all extracted information adheres to the following guidelines:
 
-    - Any type of identifier (e.g., order ID, invoice ID, product ID, customer ID) should be mapped to 'ID'.
-    - Any type of name (e.g., product name, customer name, entity name) should be mapped to 'name'.
-    - Any type of monetary amount (e.g., total, balance, payment) should be mapped to 'amount'.
-    - Any price-related information should be mapped to 'price'.
-    - Any additional key-value pairs should be extracted and assigned generic parameter names based on their context.
+### Mapping Guidelines:
+- **ID**: Any identifier such as order ID, invoice ID, product ID, customer ID, or any string that resembles an identifier (alphanumeric or numeric codes).
+- **Name**: Any type of name, including product name, customer name, entity name, item name, or any word sequence that resembles a name (person, product, or entity).
+- **Amount**: Any monetary value representing total, balance, payment, or any type of financial amount.
+- **Price**: Any information related to the cost or price of an item or service.
+- **Date**: Any recognized date in formats like YYYY-MM-DD, DD/MM/YYYY, MM-DD-YYYY, or named dates like 'yesterday', 'last month', etc.
+- **Quantity**: Any numerical information related to quantities or counts of items.
+- **Time**: Any recognized time in formats like HH:MM:SS, 24-hour format, or named times like 'morning', 'afternoon', etc.
 
-    Please return the extracted information in a well-structured JSON format.
+### Validation Rules:
+- Ensure that each extracted parameter has a **single value**. If multiple values exist (e.g., multiple names or amounts), return the first one found.
+- **Do not** return any nested structures. The JSON must be flat, and all parameters should be at the top level.
 
-    Statement: "{query}"
+    Statement: "{query}" 
     """
 
-    # Send the prompt to Gemini for classification
-    response = model.generate_content(prompt)
+    print("Prompt being sent:", prompt)  # Print the prompt for debugging
+
+    try:
+        response = model.generate_content(prompt)
+        print("Gemini response received:", response.text)  # Print the response for debugging
+    except Exception as e:
+        print(f"Error during Gemini API call: {e}")
+        return "{}"
+
     classification = response.text.strip().lower()
-    #print("Gemini Key information before cleaning:", classification)
-    classification = classification.replace("json", "").strip() # Remove "json" from the string and strip leading/trailing whitespace
+    classification = classification.replace("json", "").strip()  # Remove "json" from the string and strip whitespace
+    
     while classification.startswith('"') or classification.startswith("'") or classification.startswith("`"):
         classification = classification[1:]  # Remove the first character if it's a quote
     while classification.endswith('"') or classification.endswith("'") or classification.endswith("`"):
         classification = classification[:-1]  # Remove the last character if it's a quote
 
-    # Remove backticks from the string
-    classification = classification.replace("`", "")
-    print("Gemini Key information after cleaning:", classification)
-     # Convert string to dictionary to ensure valid JSON and remove any null values
+    classification = classification.replace("`", "")  # Remove backticks
+
     try:
         extracted_data = json.loads(classification)
-        filtered_data = {k: v for k, v in extracted_data.items() if v is not None}
-        return json.dumps(filtered_data)  # Return as JSON without null values
-    except json.JSONDecodeError:
-        print("JSON contains null values")
+        fields_to_ignore = ['finish_message']  # Ignore unwanted fields
+        filtered_data = {k: v for k, v in extracted_data.items() if k not in fields_to_ignore and v is not None}
+
+        print("Filtered Data after Cleaning:", filtered_data)  # Print cleaned data
+        return json.dumps(filtered_data)  # Return as JSON without unwanted fields
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON: {e}")
         return "{}"
-def extract_key_action_with_gemini_missing(query: str, missing_items_string: list) -> str:
-    """
-    Use Gemini to extract key information from the query.
-    """
-    prompt = f"""
-    You are a helpful assistant. Extract key informations {missing_items_string} from the statement below, with missing items being the key and value being extracted info. 
 
-    - Map any type of identifier (e.g., order ID, invoice ID, product ID, customer ID) to 'ID'.
-    - Map any type of name (e.g., product name, customer name, entity name) to 'name'.
-    - Map any type of monetary amount (e.g., total, balance, payment) to 'amount'.
-    - Map any price-related information to 'price'.
-    - Additionally, check the following list for expected items that should be mentioned in the statement: {missing_items_string}.
-    - Extract which items from this list are missing in the statement and include them in a 'missing' list in the output.
-
-    Return the extracted information in a well-structured JSON format. REMEMBER YOU SHOULD EXTRACT ONLY {missing_items_string} AND NOT ANYTHING THAN THAT
-
-    Statement: "{query}"
-"""
-
-    # Send the prompt to Gemini for classification
-    response = model.generate_content(prompt)
-    classification = response.text.strip().lower()
-    #print("Gemini Key information before cleaning:", classification)
-    classification = classification.replace("json", "").strip() # Remove "json" from the string and strip leading/trailing whitespace
-    while classification.startswith('"') or classification.startswith("'") or classification.startswith("`"):
-        classification = classification[1:]  # Remove the first character if it's a quote
-    while classification.endswith('"') or classification.endswith("'") or classification.endswith("`"):
-        classification = classification[:-1]  # Remove the last character if it's a quote
-
-    # Remove backticks from the string
-    classification = classification.replace("`", "")
-    print("Gemini Key information after cleaning:", classification)
-     # Convert string to dictionary to ensure valid JSON and remove any null values
-    try:
-        extracted_data = json.loads(classification)
-        filtered_data = {k: v for k, v in extracted_data.items() if v is not None}
-        return json.dumps(filtered_data)  # Return as JSON without null values
-    except json.JSONDecodeError:
-        print("JSON contains null values")
-        return "{}"
-    #return classification
 def classify_query_with_gemini(query: str) -> str:
     order_functions = [
         "create_order",
@@ -699,6 +833,7 @@ Examples:
 - "Show me my last order" -> context_based (since no order ID is mentioned)
 - "What's your return policy?" -> context_based
 - "What is my last order?" -> context_based
+- "Get all orders and statuses" -> get_orders
 
 Query: "{query}"
 
